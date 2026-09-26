@@ -14,6 +14,9 @@ import 'package:sinema/settings_controller.dart';
 
 void main() {
   testWidgets('shows Jellyfin sign-in form', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({});
     final settings = SettingsController();
     await settings.load();

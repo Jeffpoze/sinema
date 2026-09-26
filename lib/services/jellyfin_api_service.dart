@@ -53,7 +53,7 @@ class JellyfinApiService {
 
   static const _deviceId = 'c78432a9-816f-45b6-b510-123456789abc';
   static const _clientIdentity =
-      'Client="BlackTheatre", Device="iOS", DeviceId="$_deviceId", Version="1.0.0"';
+      'Client="Sinema", Device="iOS", DeviceId="$_deviceId", Version="1.0.0"';
 
   // Requesting a size matching where the image is actually displayed (rather
   // than whatever resolution the source art happens to be) is the single

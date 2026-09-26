@@ -9,17 +9,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:black_theatre_tv/main.dart';
-import 'package:black_theatre_tv/settings_controller.dart';
+import 'package:sinema/main.dart';
+import 'package:sinema/settings_controller.dart';
 
 void main() {
   testWidgets('shows Jellyfin sign-in form', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     final settings = SettingsController();
     await settings.load();
-    await tester.pumpWidget(BlackTheatreTvApp(settings: settings));
+    await tester.pumpWidget(SinemaApp(settings: settings));
 
-    expect(find.text('Welcome to your theatre.'), findsOneWidget);
+    expect(find.text('Welcome to Sinema.'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(3));
     expect(find.text('Sign In'), findsOneWidget);
   });

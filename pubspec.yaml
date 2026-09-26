@@ -1,4 +1,4 @@
-name: black_theatre_tv
+name: sinema
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -57,10 +57,10 @@ flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"
   ios: true
   remove_alpha_ios: true
-  background_color_ios: "#090A0C"
+  background_color_ios: "#0A0A0A"
   android: true
-  adaptive_icon_background: "#090A0C"
-  adaptive_icon_foreground: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#0A0A0A"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

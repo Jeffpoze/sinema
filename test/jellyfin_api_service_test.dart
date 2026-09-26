@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:black_theatre_tv/services/jellyfin_api_service.dart';
+import 'package:sinema/services/jellyfin_api_service.dart';
 
 void main() {
   group('JellyfinApiService.getStreamUrl', () {

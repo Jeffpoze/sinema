@@ -1,4 +1,4 @@
-# Black Theatre
+# Sinema
 
 A personal media client for a self-hosted Jellyfin server, for iOS and Android.
 
@@ -22,7 +22,7 @@ A personal media client for a self-hosted Jellyfin server, for iOS and Android.
 
 ### Download
 
-- **Android**: grab the latest APK from the [Releases page](https://github.com/Jeffpoze/black-theatre/releases/tag/android-latest) and sideload it (you'll need to allow "install from unknown sources" on your device). A fresh build is published automatically on every push to `main`.
+- **Android**: grab the latest APK from the [Releases page](https://github.com/Jeffpoze/sinema/releases/tag/android-latest) and sideload it (you'll need to allow "install from unknown sources" on your device). A fresh build is published automatically on every push to `main`.
 - **iOS**: there's no public download yet — Apple's signing requirements mean it needs to be built and installed from source (see below).
 
 ### Running from source

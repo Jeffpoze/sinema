@@ -20,7 +20,7 @@ Future<void> main() async {
   final settings = SettingsController();
   await settings.load();
   final savedSession = await _loadSavedSession();
-  runApp(BlackTheatreTvApp(settings: settings, initialSession: savedSession));
+  runApp(SinemaApp(settings: settings, initialSession: savedSession));
 }
 
 Future<JellyfinSession?> _loadSavedSession() async {
@@ -39,8 +39,8 @@ Future<JellyfinSession?> _loadSavedSession() async {
   );
 }
 
-class BlackTheatreTvApp extends StatelessWidget {
-  const BlackTheatreTvApp({
+class SinemaApp extends StatelessWidget {
+  const SinemaApp({
     super.key,
     required this.settings,
     this.initialSession,
@@ -54,7 +54,7 @@ class BlackTheatreTvApp extends StatelessWidget {
     return AnimatedBuilder(
       animation: settings,
       builder: (context, _) => MaterialApp(
-        title: 'Black Theatre',
+        title: 'Sinema',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark().copyWith(
           scaffoldBackgroundColor: background,
@@ -174,7 +174,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
               Image.asset('assets/images/logo_mark.png', width: 88, height: 88),
               const SizedBox(height: 24),
               Text(
-                'Welcome to your theatre.',
+                'Welcome to Sinema.',
                 style: Theme.of(context).textTheme.headlineMedium
                     ?.copyWith(fontWeight: FontWeight.w700),
               ),
@@ -534,7 +534,7 @@ class _HomePageState extends State<HomePage> {
         title: Text(
           selected != null && selected['Name'] is String
               ? (selected['Name'] as String).toUpperCase()
-              : 'BLACK THEATRE',
+              : 'SINEMA',
           style: const TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w700,

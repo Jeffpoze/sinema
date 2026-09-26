@@ -31,7 +31,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-latest
-          name: Black Theatre (Android)
+          name: Sinema (Android)
           body: Automated build from the latest commit on main. Debug-signed for sideloading only.
           files: build/app/outputs/flutter-apk/app-release.apk
           make_latest: true

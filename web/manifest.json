@@ -1,6 +1,6 @@
 {
-    "name": "black_theatre_tv",
-    "short_name": "black_theatre_tv",
+    "name": "Sinema",
+    "short_name": "Sinema",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

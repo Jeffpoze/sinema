@@ -441,7 +441,7 @@ class AboutScreen extends StatelessWidget {
         body: const Padding(
           padding: EdgeInsets.all(20),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Black Theatre', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            Text('Sinema', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             SizedBox(height: 8),
             Text('Version 1.0.0', style: TextStyle(color: Color(0xFFA5A7AC))),
             SizedBox(height: 16),

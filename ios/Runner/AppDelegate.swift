@@ -1,6 +1,7 @@
 import AVFoundation
 import Flutter
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -14,6 +15,8 @@ import UIKit
     } catch {
       print("Failed to configure AVAudioSession: \(error)")
     }
+    // Lets Live TV program reminders show while the app is open.
+    UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

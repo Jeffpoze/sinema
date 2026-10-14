@@ -88,6 +88,7 @@ class _IptvSourceEditorState extends State<IptvSourceEditor> {
   late final _password = TextEditingController(text: widget.existing?.password ?? '');
   late final _epg = TextEditingController(text: widget.existing?.epgUrl ?? '');
   late final _userAgent = TextEditingController(text: widget.existing?.userAgent ?? '');
+  late int _epgOffsetMinutes = widget.existing?.epgOffsetMinutes ?? 0;
   bool _showPassword = false;
   bool _showAdvanced = false;
   String? _validation;
@@ -130,8 +131,9 @@ class _IptvSourceEditorState extends State<IptvSourceEditor> {
             password: _password.text,
             epgUrl: epg,
             userAgent: _userAgent.text.trim(),
+            epgOffsetMinutes: _epgOffsetMinutes,
           )
-        : existing.copyWith(name: name, type: _type, url: url, username: _username.text.trim(), password: _password.text, epgUrl: epg, userAgent: _userAgent.text.trim());
+        : existing.copyWith(name: name, type: _type, url: url, username: _username.text.trim(), password: _password.text, epgUrl: epg, userAgent: _userAgent.text.trim(), epgOffsetMinutes: _epgOffsetMinutes);
     Navigator.of(context).pop();
     if (existing == null) {
       await repo.addSource(source);
@@ -227,7 +229,27 @@ class _IptvSourceEditorState extends State<IptvSourceEditor> {
               label: const Text('Advanced'),
               style: TextButton.styleFrom(alignment: Alignment.centerLeft, foregroundColor: const Color(0xFFA5A7AC)),
             ),
-            if (_showAdvanced) _field(_userAgent, 'User agent (optional)', hint: 'Only if your provider requires one'),
+            if (_showAdvanced) ...[
+              _field(_userAgent, 'User agent (optional)', hint: 'Only if your provider requires one'),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Guide time offset', style: TextStyle(fontSize: 16))),
+                    DropdownButton<int>(
+                      value: _epgOffsetMinutes,
+                      underline: const SizedBox.shrink(),
+                      items: [
+                        for (var h = -12; h <= 12; h++)
+                          DropdownMenuItem(value: h * 60, child: Text(h == 0 ? 'None' : '${h > 0 ? '+' : ''}$h h')),
+                        if (_epgOffsetMinutes % 60 != 0) DropdownMenuItem(value: _epgOffsetMinutes, child: Text('$_epgOffsetMinutes min')),
+                      ],
+                      onChanged: (v) => setState(() => _epgOffsetMinutes = v ?? 0),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (_validation != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),

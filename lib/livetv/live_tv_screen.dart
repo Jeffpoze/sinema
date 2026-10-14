@@ -11,6 +11,8 @@ import 'iptv_player_screen.dart';
 import 'iptv_repository.dart';
 import 'iptv_series_screen.dart';
 import 'iptv_sources_screen.dart';
+import 'live_tv_settings_screen.dart';
+import 'reminder_service.dart';
 
 const _muted = Color(0xFFA5A7AC);
 const _favoritesGroup = '★ Favorites';
@@ -47,7 +49,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _repo.ensureLoaded();
+    _repo.ensureLoaded().then((_) => _maybeAutoPlay());
+    ReminderService.instance.init();
     // Now/next lines and progress bars drift; nudge a repaint each minute.
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
@@ -60,6 +63,18 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
     _tabs.dispose();
     _search.dispose();
     super.dispose();
+  }
+
+  // TiviMate's "start with last channel".
+  static bool _autoPlayed = false;
+
+  void _maybeAutoPlay() {
+    if (_autoPlayed || !mounted || !_repo.prefs.autoPlayLast) return;
+    final last = _repo.lastChannel;
+    if (last == null) return;
+    _autoPlayed = true;
+    final channels = _repo.liveChannels;
+    _play(context, channels, channels.indexOf(last));
   }
 
   void _openSources() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const IptvSourcesScreen()));
@@ -101,6 +116,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
                   }),
                 ),
               IconButton(icon: const Icon(Icons.playlist_add), tooltip: 'Playlists', onPressed: _openSources),
+              if (_repo.hasSources)
+                IconButton(
+                  icon: const Icon(Icons.tune),
+                  tooltip: 'Live TV settings',
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveTvSettingsScreen())),
+                ),
             ],
             bottom: _repo.hasSources
                 ? TabBar(
@@ -204,15 +225,15 @@ List<String> _liveGroupOptions(IptvRepository repo) => [
       if (repo.favoritesOf(IptvKind.live).isNotEmpty) _favoritesGroup,
       if (repo.recentChannels.isNotEmpty) _recentGroup,
       _allGroup,
-      ..._groupsOf(repo.liveChannels),
+      ...repo.liveGroups,
     ];
 
 List<IptvItem> _channelsForGroup(IptvRepository repo, String group, String query) {
   final List<IptvItem> base = switch (group) {
     _favoritesGroup => repo.favoritesOf(IptvKind.live),
     _recentGroup => repo.recentChannels,
-    _allGroup => repo.liveChannels,
-    _ => repo.liveChannels.where((c) => c.group == group).toList(),
+    _allGroup => repo.sorted(repo.liveChannels),
+    _ => repo.sorted(repo.liveChannels.where((c) => c.group == group).toList()),
   };
   final q = query.trim().toLowerCase();
   if (q.isEmpty) return base;
@@ -220,11 +241,261 @@ List<IptvItem> _channelsForGroup(IptvRepository repo, String group, String query
   return repo.liveChannels.where((c) => c.name.toLowerCase().contains(q)).toList();
 }
 
+// Parental lock: asks for the PIN once per app session.
+Future<bool> ensureUnlocked(BuildContext context, IptvItem item) async {
+  final repo = IptvRepository.instance;
+  if (!repo.isLocked(item)) return true;
+  return askPin(context);
+}
+
+Future<bool> askPin(BuildContext context, {String title = 'Enter PIN'}) async {
+  final repo = IptvRepository.instance;
+  final controller = TextEditingController();
+  String? error;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          maxLength: 8,
+          decoration: InputDecoration(hintText: 'Parental PIN', errorText: error, counterText: ''),
+          onSubmitted: (_) {
+            if (repo.unlock(controller.text)) {
+              Navigator.of(dialogContext).pop(true);
+            } else {
+              setState(() => error = 'Wrong PIN');
+            }
+          },
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              if (repo.unlock(controller.text)) {
+                Navigator.of(dialogContext).pop(true);
+              } else {
+                setState(() => error = 'Wrong PIN');
+              }
+            },
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    ),
+  );
+  return ok ?? false;
+}
+
 String _hhmm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
-void _play(BuildContext context, List<IptvItem> items, int index, {String? subtitle}) {
-  Navigator.of(context).push(MaterialPageRoute(builder: (_) => IptvPlayerScreen(items: items, initialIndex: index, subtitle: subtitle)));
+Future<void> _play(BuildContext context, List<IptvItem> items, int index, {String? subtitle}) async {
+  if (index < 0 || index >= items.length) return;
+  if (!await ensureUnlocked(context, items[index])) return;
+  if (!context.mounted) return;
+  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => IptvPlayerScreen(items: items, initialIndex: index, subtitle: subtitle)));
 }
+
+// Replays a past (or the start of the current) programme.
+Future<void> playCatchup(BuildContext context, IptvItem channel, EpgProgram program) async {
+  final repo = IptvRepository.instance;
+  final url = repo.catchupUrl(channel, program);
+  if (url == null) return;
+  if (!await ensureUnlocked(context, channel)) return;
+  if (!context.mounted) return;
+  final replay = channel.copyWith(url: url, kind: IptvKind.movie, name: channel.name);
+  await Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => IptvPlayerScreen(items: [replay], initialIndex: 0, subtitle: 'Catch-up · ${program.title} · ${_hhmm(program.start)}'),
+  ));
+}
+
+Future<void> toggleReminder(BuildContext context, IptvItem channel, EpgProgram program) async {
+  final service = ReminderService.instance;
+  final adding = !service.has(channel, program);
+  final ok = await service.toggle(channel, program);
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      content: Text(!ok
+          ? 'Allow notifications for Sinema in Settings to get reminders.'
+          : adding
+              ? 'We\'ll remind you before ${program.title} starts.'
+              : 'Reminder removed.'),
+    ));
+}
+
+// Everything you can do with a channel, TiviMate-style (long-press).
+Future<void> showChannelActions(BuildContext context, IptvItem channel, List<IptvItem> channels) async {
+  final repo = IptvRepository.instance;
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) {
+      void close() => Navigator.of(sheetContext).pop();
+      final groupLocked = repo.isGroupLocked(channel.group);
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: _ChannelLogo(channel: channel, width: 44, height: 30),
+              title: Text(channel.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(channel.group, style: const TextStyle(color: _muted)),
+            ),
+            const Divider(height: 1, color: Color(0xFF1B1D22)),
+            ListTile(
+              leading: const Icon(Icons.play_arrow),
+              title: const Text('Watch'),
+              onTap: () {
+                close();
+                _play(context, channels, channels.indexOf(channel));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.event_note_outlined),
+              title: Text(channel.hasCatchup ? 'Schedule & Catch-up' : 'Schedule'),
+              onTap: () {
+                close();
+                showChannelSchedule(context, channel, channels);
+              },
+            ),
+            ListTile(
+              leading: Icon(repo.isFavorite(channel) ? Icons.star_rounded : Icons.star_outline_rounded),
+              title: Text(repo.isFavorite(channel) ? 'Remove from Favorites' : 'Add to Favorites'),
+              onTap: () {
+                close();
+                _toggleFavorite(context, channel);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: const Text('Hide Channel'),
+              subtitle: const Text('Bring it back from Live TV Settings', style: TextStyle(color: _muted)),
+              onTap: () {
+                close();
+                repo.updatePrefs((p) => p.copyWith(hiddenChannels: {...p.hiddenChannels, channel.id}));
+              },
+            ),
+            ListTile(
+              leading: Icon(groupLocked ? Icons.lock_open_outlined : Icons.lock_outline),
+              title: Text(groupLocked ? 'Unlock "${channel.group}"' : 'Lock "${channel.group}"'),
+              onTap: () async {
+                close();
+                if (!repo.hasPin) {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveTvSettingsScreen(focusPin: true)));
+                  return;
+                }
+                if (!await askPin(context, title: 'Enter PIN to change locks')) return;
+                final locked = {...repo.prefs.lockedGroups};
+                if (!locked.remove(channel.group)) locked.add(channel.group);
+                repo.updatePrefs((p) => p.copyWith(lockedGroups: locked));
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+// A channel's full programme list: catch-up for what's aired, reminders for
+// what's coming.
+Future<void> showChannelSchedule(BuildContext context, IptvItem channel, List<IptvItem> channels) async {
+  final repo = IptvRepository.instance;
+  final now = DateTime.now();
+  final days = channel.catchupDays ?? 0;
+  final earliest = now.subtract(Duration(days: days > 0 ? days : 0, hours: days > 0 ? 0 : 1));
+  final programs = repo.programsFor(channel).where((p) => p.end.isAfter(earliest)).toList();
+  final currentIndex = programs.indexWhere((p) => p.isAiringAt(now));
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) => SizedBox(
+      height: MediaQuery.of(sheetContext).size.height * .75,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([repo, ReminderService.instance]),
+        builder: (sheetContext, _) {
+          final accent = Theme.of(sheetContext).colorScheme.primary;
+          return Column(
+            children: [
+              ListTile(
+                leading: _ChannelLogo(channel: channel, width: 44, height: 30),
+                title: Text(channel.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                subtitle: Text(channel.hasCatchup ? 'Catch-up: ${channel.catchupDays} days' : channel.group, style: const TextStyle(color: _muted)),
+              ),
+              const Divider(height: 1, color: Color(0xFF1B1D22)),
+              Expanded(
+                child: programs.isEmpty
+                    ? const Center(child: Text('No guide information for this channel.', style: TextStyle(color: _muted)))
+                    : ListView.builder(
+                        // Open on what's airing now; scroll up for catch-up.
+                        controller: ScrollController(initialScrollOffset: currentIndex <= 0 ? 0 : currentIndex * 64.0),
+                        itemExtent: 64,
+                        itemCount: programs.length,
+                        itemBuilder: (context, index) {
+                          final p = programs[index];
+                          final airing = p.isAiringAt(now);
+                          final past = p.end.isBefore(now);
+                          final catchup = repo.canCatchup(channel, p);
+                          final reminded = ReminderService.instance.has(channel, p);
+                          final dayLabel = DateUtils.isSameDay(p.start, now) ? '' : '${_weekday(p.start)} ';
+                          return ListTile(
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            tileColor: airing ? accent.withValues(alpha: .12) : null,
+                            leading: SizedBox(
+                              width: 64,
+                              child: Text('$dayLabel${_hhmm(p.start)}', style: TextStyle(color: airing ? accent : (past ? _muted : Colors.white), fontWeight: FontWeight.w600)),
+                            ),
+                            title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: past && !catchup ? _muted : Colors.white)),
+                            subtitle: p.description == null ? null : Text(p.description!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted)),
+                            trailing: airing
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (catchup)
+                                        IconButton(tooltip: 'Watch from start', icon: const Icon(Icons.replay), onPressed: () {
+                                          Navigator.of(sheetContext).pop();
+                                          playCatchup(context, channel, p);
+                                        }),
+                                      Icon(Icons.circle, size: 10, color: accent),
+                                    ],
+                                  )
+                                : past
+                                    ? (catchup ? const Icon(Icons.history, color: Colors.white70) : null)
+                                    : IconButton(
+                                        tooltip: reminded ? 'Remove reminder' : 'Remind me',
+                                        icon: Icon(reminded ? Icons.notifications_active : Icons.notifications_none, color: reminded ? accent : Colors.white70),
+                                        onPressed: () => toggleReminder(context, channel, p),
+                                      ),
+                            onTap: () {
+                              if (airing) {
+                                Navigator.of(sheetContext).pop();
+                                _play(context, channels.contains(channel) ? channels : [channel], channels.contains(channel) ? channels.indexOf(channel) : 0);
+                              } else if (past && catchup) {
+                                Navigator.of(sheetContext).pop();
+                                playCatchup(context, channel, p);
+                              } else if (!past) {
+                                toggleReminder(context, channel, p);
+                              }
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
+    ),
+  );
+}
+
+String _weekday(DateTime t) => const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][t.weekday - 1];
 
 void _toggleFavorite(BuildContext context, IptvItem item) {
   final repo = IptvRepository.instance;
@@ -254,24 +525,91 @@ class _ChannelsTab extends StatelessWidget {
           children: [
             if (query.isEmpty) _GroupChips(groups: options, selected: selected, onSelect: (g) => _liveGroup.value = g),
             Expanded(
-              child: channels.isEmpty
-                  ? Center(child: Text(repo.isAnyRefreshing ? 'Loading channels…' : 'No channels here.', style: const TextStyle(color: _muted)))
-                  : ListView.builder(
-                      itemExtent: 76,
-                      itemCount: channels.length,
-                      itemBuilder: (context, index) => _ChannelRow(
-                        channel: channels[index],
-                        position: index,
-                        onTap: () => _play(context, channels, index),
-                        onLongPress: () => _toggleFavorite(context, channels[index]),
-                      ),
-                    ),
+              child: query.trim().isNotEmpty
+                  ? _SearchResults(channels: channels, query: query)
+                  : channels.isEmpty
+                      ? Center(child: Text(repo.isAnyRefreshing ? 'Loading channels…' : 'No channels here.', style: const TextStyle(color: _muted)))
+                      : ListView.builder(
+                          itemExtent: 76,
+                          itemCount: channels.length,
+                          itemBuilder: (context, index) => _ChannelRow(
+                            channel: channels[index],
+                            position: index,
+                            onTap: () => _play(context, channels, index),
+                            onLongPress: () => showChannelActions(context, channels[index], channels),
+                          ),
+                        ),
             ),
           ],
         );
       },
     );
   }
+}
+
+// Search: matching channels, then matching shows from the guide.
+class _SearchResults extends StatelessWidget {
+  const _SearchResults({required this.channels, required this.query});
+  final List<IptvItem> channels;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = IptvRepository.instance;
+    final programs = repo.searchPrograms(query);
+    final allChannels = repo.liveChannels;
+    if (channels.isEmpty && programs.isEmpty) {
+      return const Center(child: Text('Nothing matches.', style: TextStyle(color: _muted)));
+    }
+    return ListView(
+      children: [
+        if (channels.isNotEmpty) const _SectionLabel('Channels'),
+        for (var i = 0; i < channels.length && i < 40; i++)
+          SizedBox(
+            height: 76,
+            child: _ChannelRow(
+              channel: channels[i],
+              position: i,
+              onTap: () => _play(context, channels, i),
+              onLongPress: () => showChannelActions(context, channels[i], channels),
+            ),
+          ),
+        if (programs.isNotEmpty) const _SectionLabel('On the Guide'),
+        for (final r in programs)
+          ListTile(
+            leading: _ChannelLogo(channel: r.channel, width: 44, height: 30),
+            title: Text(r.program.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${r.channel.name} · ${DateUtils.isSameDay(r.program.start, DateTime.now()) ? '' : '${_weekday(r.program.start)} '}${_hhmm(r.program.start)}',
+              style: const TextStyle(color: _muted),
+            ),
+            trailing: r.program.isAiringAt(DateTime.now())
+                ? Icon(Icons.circle, size: 10, color: Theme.of(context).colorScheme.primary)
+                : AnimatedBuilder(
+                    animation: ReminderService.instance,
+                    builder: (context, _) => IconButton(
+                      icon: Icon(ReminderService.instance.has(r.channel, r.program) ? Icons.notifications_active : Icons.notifications_none),
+                      onPressed: () => toggleReminder(context, r.channel, r.program),
+                    ),
+                  ),
+            onTap: () => r.program.isAiringAt(DateTime.now())
+                ? _play(context, allChannels, allChannels.indexOf(r.channel))
+                : showChannelSchedule(context, r.channel, allChannels),
+          ),
+      ],
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+        child: Text(text.toUpperCase(), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: _muted)),
+      );
 }
 
 class _ChannelLogo extends StatelessWidget {
@@ -424,6 +762,39 @@ class _GuideTabState extends State<_GuideTab> {
                 Text(program.description!, maxLines: 8, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.4)),
               ],
               const SizedBox(height: 20),
+              if (IptvRepository.instance.canCatchup(channel, program)) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      playCatchup(context, channel, program);
+                    },
+                    icon: const Icon(Icons.replay),
+                    label: Text(airing ? 'Watch from Start' : 'Watch (Catch-up)'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              if (program.start.isAfter(DateTime.now())) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: AnimatedBuilder(
+                    animation: ReminderService.instance,
+                    builder: (context, _) {
+                      final set = ReminderService.instance.has(channel, program);
+                      return OutlinedButton.icon(
+                        onPressed: () => toggleReminder(context, channel, program),
+                        icon: Icon(set ? Icons.notifications_active : Icons.notifications_none),
+                        label: Text(set ? 'Reminder Set' : 'Remind Me'),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               SizedBox(
                 width: double.infinity,
                 height: 48,
@@ -433,7 +804,7 @@ class _GuideTabState extends State<_GuideTab> {
                     _play(context, channels, channels.indexOf(channel));
                   },
                   icon: const Icon(Icons.play_arrow),
-                  label: Text(airing ? 'Watch Now' : 'Watch ${channel.name}'),
+                  label: Text(airing ? 'Watch Now' : 'Watch ${channel.name} Live'),
                 ),
               ),
             ],
@@ -521,7 +892,7 @@ class _GuideTabState extends State<_GuideTab> {
                                     children: [
                                       InkWell(
                                         onTap: () => _play(context, channels, index),
-                                        onLongPress: () => _toggleFavorite(context, channel),
+                                        onLongPress: () => showChannelActions(context, channel, channels),
                                         child: Container(
                                           width: _channelColumn,
                                           height: _rowHeight,

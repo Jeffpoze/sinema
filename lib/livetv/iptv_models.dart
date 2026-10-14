@@ -14,6 +14,8 @@ class IptvSource {
     this.password = '',
     this.epgUrl = '',
     this.userAgent = '',
+    this.epgOffsetMinutes = 0,
+    this.serverTimezone = '',
   });
 
   final String id;
@@ -26,6 +28,11 @@ class IptvSource {
   // Optional XMLTV guide. For Xtream it defaults to the provider's own.
   final String epgUrl;
   final String userAgent;
+  // Shifts every guide entry, for providers whose EPG times are off.
+  final int epgOffsetMinutes;
+  // Xtream panels expect catch-up start times in the server's own zone
+  // (reported by the panel, e.g. "Europe/London").
+  final String serverTimezone;
 
   String get serverBase => url.trim().replaceFirst(RegExp(r'/+$'), '');
 
@@ -39,7 +46,7 @@ class IptvSource {
 
   Map<String, String> get headers => userAgent.trim().isEmpty ? const {} : {'User-Agent': userAgent.trim()};
 
-  IptvSource copyWith({String? name, IptvSourceType? type, String? url, String? username, String? password, String? epgUrl, String? userAgent}) => IptvSource(
+  IptvSource copyWith({String? name, IptvSourceType? type, String? url, String? username, String? password, String? epgUrl, String? userAgent, int? epgOffsetMinutes, String? serverTimezone}) => IptvSource(
         id: id,
         name: name ?? this.name,
         type: type ?? this.type,
@@ -48,6 +55,8 @@ class IptvSource {
         password: password ?? this.password,
         epgUrl: epgUrl ?? this.epgUrl,
         userAgent: userAgent ?? this.userAgent,
+        epgOffsetMinutes: epgOffsetMinutes ?? this.epgOffsetMinutes,
+        serverTimezone: serverTimezone ?? this.serverTimezone,
       );
 
   Map<String, dynamic> toJson() => {
@@ -59,6 +68,8 @@ class IptvSource {
         'password': password,
         'epgUrl': epgUrl,
         'userAgent': userAgent,
+        'epgOffsetMinutes': epgOffsetMinutes,
+        'serverTimezone': serverTimezone,
       };
 
   static IptvSource fromJson(Map<String, dynamic> json) => IptvSource(
@@ -70,6 +81,8 @@ class IptvSource {
         password: (json['password'] as String?) ?? '',
         epgUrl: (json['epgUrl'] as String?) ?? '',
         userAgent: (json['userAgent'] as String?) ?? '',
+        epgOffsetMinutes: (json['epgOffsetMinutes'] as num?)?.toInt() ?? 0,
+        serverTimezone: (json['serverTimezone'] as String?) ?? '',
       );
 }
 
@@ -94,6 +107,10 @@ class IptvItem {
     this.plot,
     this.rating,
     this.year,
+    this.streamId,
+    this.catchupDays,
+    this.catchupType,
+    this.catchupSource,
   });
 
   final String id;
@@ -110,6 +127,37 @@ class IptvItem {
   final String? plot;
   final String? rating;
   final String? year;
+  // Xtream stream id (live channels), used for catch-up URLs.
+  final String? streamId;
+  // How far back the provider keeps recordings for replay, if at all.
+  final int? catchupDays;
+  // M3U catch-up style ("default", "append", "shift", "flussonic", "xc")
+  // and its URL template.
+  final String? catchupType;
+  final String? catchupSource;
+
+  bool get hasCatchup => (catchupDays ?? 0) > 0;
+
+  IptvItem copyWith({String? url, IptvKind? kind, String? name}) => IptvItem(
+        id: id,
+        sourceId: sourceId,
+        kind: kind ?? this.kind,
+        name: name ?? this.name,
+        group: group,
+        url: url ?? this.url,
+        logo: logo,
+        epgId: epgId,
+        number: number,
+        seriesId: seriesId,
+        seriesName: seriesName,
+        plot: plot,
+        rating: rating,
+        year: year,
+        streamId: streamId,
+        catchupDays: catchupDays,
+        catchupType: catchupType,
+        catchupSource: catchupSource,
+      );
 
   Map<String, dynamic> toJson() => {
         'i': id,
@@ -126,6 +174,10 @@ class IptvItem {
         if (plot != null) 'p': plot,
         if (rating != null) 'r': rating,
         if (year != null) 'y': year,
+        if (streamId != null) 'st': streamId,
+        if (catchupDays != null) 'cd': catchupDays,
+        if (catchupType != null) 'ct': catchupType,
+        if (catchupSource != null) 'cs': catchupSource,
       };
 
   static IptvItem fromJson(Map<String, dynamic> j) => IptvItem(
@@ -143,6 +195,10 @@ class IptvItem {
         plot: j['p'] as String?,
         rating: j['r'] as String?,
         year: j['y'] as String?,
+        streamId: j['st'] as String?,
+        catchupDays: (j['cd'] as num?)?.toInt(),
+        catchupType: j['ct'] as String?,
+        catchupSource: j['cs'] as String?,
       );
 }
 

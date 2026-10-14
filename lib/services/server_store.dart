@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'jellyfin_api_service.dart';
@@ -10,7 +11,7 @@ enum StartupMode { welcome, server, liveTvOnly }
 // Every Jellyfin / Emby account signed into on this device, and which one is
 // active. Only one server is in use at a time; switching swaps the home
 // screen over to another saved account without signing in again.
-class ServerStore {
+class ServerStore extends ChangeNotifier {
   ServerStore._();
   static final instance = ServerStore._();
 
@@ -108,6 +109,35 @@ class ServerStore {
     _accounts = _accounts.where((a) => a.accountId != accountId).toList();
     if (_activeId == accountId) _activeId = _accounts.isEmpty ? null : _accounts.first.accountId;
     await _save();
+  }
+
+  // Re-reads each server's own name (and type) so menus show "El Pozo"
+  // rather than an address. Accounts saved by older versions never stored
+  // it; it also picks up a server being renamed. Quiet if a server is down.
+  Future<void> refreshServerInfo([JellyfinApiService? api]) async {
+    final client = api ?? JellyfinApiService();
+    var changed = false;
+    for (final account in [..._accounts]) {
+      final info = await client.detectServer(account.serverUrl);
+      if (info == null) continue;
+      if (info.name.isNotEmpty && (info.name != account.serverName || info.type != account.serverType)) {
+        final updated = JellyfinSession(
+          serverUrl: account.serverUrl,
+          userId: account.userId,
+          token: account.token,
+          username: account.username,
+          isAdministrator: account.isAdministrator,
+          serverType: info.type,
+          serverName: info.name,
+        );
+        _accounts = [for (final a in _accounts) a.accountId == account.accountId ? updated : a];
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _save();
+      notifyListeners();
+    }
   }
 
   // Use the app for Live TV only; saved servers stay available to switch to.

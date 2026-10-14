@@ -4,6 +4,7 @@ import 'main.dart';
 import 'services/jellyfin_api_service.dart';
 import 'services/server_store.dart';
 import 'settings_controller.dart';
+import 'widgets/server_logo.dart';
 
 // Saved Jellyfin / Emby accounts. Tap one to switch to it; the whole app
 // moves over to that server without signing in again.
@@ -17,6 +18,23 @@ class ServersScreen extends StatefulWidget {
 
 class _ServersScreenState extends State<ServersScreen> {
   final _store = ServerStore.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _store.addListener(_changed);
+    _store.refreshServerInfo();
+  }
+
+  @override
+  void dispose() {
+    _store.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
 
   Future<void> _switchTo(JellyfinSession account) async {
     await _store.activate(account.accountId);
@@ -58,13 +76,7 @@ class _ServersScreenState extends State<ServersScreen> {
           for (final account in accounts)
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-              leading: CircleAvatar(
-                backgroundColor: (account.accountId == activeId ? accent : Colors.white24).withValues(alpha: .2),
-                child: Text(
-                  account.serverType == MediaServerType.emby ? 'E' : 'J',
-                  style: TextStyle(fontWeight: FontWeight.w800, color: account.accountId == activeId ? accent : Colors.white70),
-                ),
-              ),
+              leading: ServerLogo(session: account),
               title: Text(account.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
               subtitle: Text('${account.serverType.label} · ${account.username}\n${account.serverUrl}', style: const TextStyle(color: Color(0xFFA5A7AC), fontSize: 12)),
               isThreeLine: true,

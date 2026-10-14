@@ -18,6 +18,7 @@ import 'settings_controller.dart';
 import 'networks_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'widgets/server_logo.dart';
 import 'widgets/sinema_image.dart';
 
 Future<void> main() async {
@@ -36,6 +37,7 @@ Future<void> main() async {
   };
   runApp(SinemaApp(settings: settings));
   ReminderService.instance.init();
+  ServerStore.instance.refreshServerInfo();
 }
 
 final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -767,16 +769,19 @@ class _CategoryDrawer extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 12),
         children: [
-          // Current server, with a one-tap way to switch.
-          ListTile(
-            contentPadding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
-            leading: CircleAvatar(
-              backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: .2),
-              child: Icon(Icons.dns_outlined, color: Theme.of(context).colorScheme.primary),
-            ),
-            title: Text(session.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-            subtitle: Text('${session.serverType.label} · ${session.username}', style: const TextStyle(color: Color(0xFFA5A7AC))),
-            trailing: TextButton(onPressed: onSwitchServer, child: const Text('Switch')),
+          // Current server (logo + its own name), with a way to switch.
+          AnimatedBuilder(
+            animation: ServerStore.instance,
+            builder: (context, _) {
+              final current = ServerStore.instance.active ?? session;
+              return ListTile(
+                contentPadding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+                leading: ServerLogo(session: current),
+                title: Text(current.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                subtitle: Text('${current.serverType.label} · ${current.username}', style: const TextStyle(color: Color(0xFFA5A7AC))),
+                trailing: TextButton(onPressed: onSwitchServer, child: const Text('Switch')),
+              );
+            },
           ),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 20),

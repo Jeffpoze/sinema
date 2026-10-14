@@ -32,6 +32,8 @@ class M3uParseResult {
 M3uParseResult parseM3u(({String text, String sourceId}) input) {
   final items = <IptvItem>[];
   String? epgUrl;
+  // Playlist-wide catch-up defaults from the #EXTM3U header.
+  Map<String, String> header = const {};
   Map<String, String> attrs = const {};
   String? title;
   String? extGroup;
@@ -41,7 +43,7 @@ M3uParseResult parseM3u(({String text, String sourceId}) input) {
     final line = rawLine.trim();
     if (line.isEmpty) continue;
     if (line.startsWith('#EXTM3U')) {
-      final header = {for (final m in _attrPattern.allMatches(line)) m.group(1)!.toLowerCase(): m.group(2)!};
+      header = {for (final m in _attrPattern.allMatches(line)) m.group(1)!.toLowerCase(): m.group(2)!};
       epgUrl = header['url-tvg'] ?? header['x-tvg-url'];
       // Some playlists list several guides separated by commas; take the first.
       if (epgUrl != null && epgUrl.contains(',')) epgUrl = epgUrl.split(',').first.trim();
@@ -79,6 +81,8 @@ M3uParseResult parseM3u(({String text, String sourceId}) input) {
       kind = IptvKind.live;
     }
     final id = stableId(input.sourceId, url);
+    final catchupType = attrs['catchup'] ?? attrs['catchup-type'] ?? header['catchup'] ?? header['catchup-type'] ?? (attrs['timeshift'] != null ? 'default' : null);
+    final catchupDays = int.tryParse(attrs['catchup-days'] ?? attrs['timeshift'] ?? header['catchup-days'] ?? '') ?? (catchupType != null ? 7 : null);
     if (seen.add(id)) {
       items.add(IptvItem(
         id: id,
@@ -91,6 +95,9 @@ M3uParseResult parseM3u(({String text, String sourceId}) input) {
         epgId: (attrs['tvg-id']?.isNotEmpty ?? false) ? attrs['tvg-id'] : null,
         number: int.tryParse(attrs['tvg-chno'] ?? ''),
         seriesName: kind == IptvKind.series ? _seriesNameFrom(name, episode) : null,
+        catchupType: kind == IptvKind.live ? catchupType : null,
+        catchupDays: kind == IptvKind.live ? catchupDays : null,
+        catchupSource: kind == IptvKind.live ? (attrs['catchup-source'] ?? header['catchup-source']) : null,
       ));
     }
     attrs = const {};
@@ -136,6 +143,9 @@ List<IptvItem> parseXtreamLive(({String sourceId, String base, String user, Stri
       logo: _optStr(s['stream_icon']),
       epgId: _optStr(s['epg_channel_id']),
       number: int.tryParse(_str(s['num'])),
+      streamId: streamId,
+      catchupType: _str(s['tv_archive']) == '1' ? 'xtream' : null,
+      catchupDays: _str(s['tv_archive']) == '1' ? (int.tryParse(_str(s['tv_archive_duration'])) ?? 3) : null,
     ));
   }
   return out;
@@ -229,7 +239,7 @@ final _programmePattern = RegExp(r'<programme\b([^>]*)>(.*?)</programme>', dotAl
 final _titlePattern = RegExp(r'<title[^>]*>(.*?)</title>', dotAll: true);
 final _descPattern = RegExp(r'<desc[^>]*>(.*?)</desc>', dotAll: true);
 
-EpgParseResult parseXmltv(({Uint8List bytes, int nowMs}) input) {
+EpgParseResult parseXmltv(({Uint8List bytes, int nowMs, int offsetMinutes}) input) {
   var bytes = input.bytes;
   if (bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
     bytes = Uint8List.fromList(gzip.decode(bytes));
@@ -239,7 +249,9 @@ EpgParseResult parseXmltv(({Uint8List bytes, int nowMs}) input) {
   // Keep a practical window: a little history for "what was just on" and
   // two days ahead for the guide. Older/newer entries are dropped to keep
   // the cache small.
-  final windowStart = now.subtract(const Duration(hours: 6));
+  // Long enough back to cover a week of catch-up.
+  final windowStart = now.subtract(const Duration(days: 7));
+  final offset = Duration(minutes: input.offsetMinutes);
   final windowEnd = now.add(const Duration(hours: 48));
 
   final nameToId = <String, String>{};
@@ -253,8 +265,8 @@ EpgParseResult parseXmltv(({Uint8List bytes, int nowMs}) input) {
   final programs = <String, List<EpgProgram>>{};
   for (final m in _programmePattern.allMatches(text)) {
     final attrs = {for (final a in _attrPattern.allMatches(m.group(1)!)) a.group(1)!: a.group(2)!};
-    final start = _parseXmltvTime(attrs['start']);
-    final end = _parseXmltvTime(attrs['stop']);
+    final start = _parseXmltvTime(attrs['start'])?.add(offset);
+    final end = _parseXmltvTime(attrs['stop'])?.add(offset);
     final channel = attrs['channel'];
     if (start == null || end == null || channel == null) continue;
     if (end.isBefore(windowStart) || start.isAfter(windowEnd)) continue;

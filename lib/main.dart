@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 
 import 'calendar_screen.dart';
 import 'detail_screen.dart';
+import 'livetv/iptv_player_screen.dart';
+import 'livetv/iptv_repository.dart';
 import 'livetv/live_tv_screen.dart';
+import 'livetv/reminder_service.dart';
 import 'player_screen.dart';
 import 'servers_screen.dart';
 import 'services/jellyfin_api_service.dart';
@@ -22,8 +25,20 @@ Future<void> main() async {
   final settings = SettingsController();
   await settings.load();
   await ServerStore.instance.load();
+  // Tapping a programme reminder opens that channel.
+  ReminderService.instance.onOpenChannel = (channelId) async {
+    final repo = IptvRepository.instance;
+    await repo.ensureLoaded();
+    final channels = repo.liveChannels;
+    final index = channels.indexWhere((c) => c.id == channelId);
+    if (index < 0) return;
+    rootNavigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => IptvPlayerScreen(items: channels, initialIndex: index)));
+  };
   runApp(SinemaApp(settings: settings));
+  ReminderService.instance.init();
 }
+
+final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 // The screen the app should be showing for the current server / Live TV
 // choice. Used at launch and whenever the user switches servers.
@@ -56,6 +71,7 @@ class SinemaApp extends StatelessWidget {
         final background = settings.appTheme.background;
         final surface = settings.appTheme.surface;
         return MaterialApp(
+        navigatorKey: rootNavigatorKey,
         title: 'Sinema',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark().copyWith(

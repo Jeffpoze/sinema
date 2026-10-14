@@ -13,6 +13,7 @@ import 'player_screen.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
 import 'theme_music_player.dart';
+import 'trailer_screen.dart';
 import 'widgets/sinema_image.dart';
 
 // `dynamic as Type?` throws if the value is non-null but the wrong type —
@@ -321,7 +322,10 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _isOpeningPlayer = false;
 
   Future<void> _play(String itemId, String title, {String? subtitle, Duration startPosition = Duration.zero, VoidCallback? onNext, String? nextTitle, String? nextSubtitle, String? nextImageUrl, bool replace = false, bool isAudioOnly = false}) async {
-    if (_isOpeningPlayer) return;
+    // A replace comes from the player itself (Up Next / Next Episode) while
+    // the current player is still open, so the double-tap guard must not
+    // block it — that guard only protects against opening two players.
+    if (_isOpeningPlayer && !replace) return;
     _isOpeningPlayer = true;
     // Fade the theme out before the video's own audio starts.
     await ThemeMusicPlayer.instance.stopFor(widget.itemId);
@@ -371,7 +375,13 @@ class _DetailScreenState extends State<DetailScreen> {
       onNext: next == null ? null : () => _playEpisode(next, replace: true),
       nextTitle: _asString(next?['Name']),
       nextSubtitle: nextSeason != null && nextNumber != null ? 'Season $nextSeason, Episode $nextNumber' : null,
-      nextImageUrl: nextId == null ? null : JellyfinApiService.getImageUrl(widget.serverUrl, nextId, imageTag: nextTag, maxWidth: 480),
+      // Episodes without their own still (common for anime) fall back to the
+      // show's backdrop rather than an empty box.
+      nextImageUrl: nextId == null
+          ? null
+          : (nextTag != null
+              ? JellyfinApiService.getImageUrl(widget.serverUrl, nextId, imageTag: nextTag, maxWidth: 480)
+              : JellyfinApiService.getBackdropUrl(widget.serverUrl, widget.itemId, maxWidth: 480)),
     );
   }
 
@@ -507,10 +517,15 @@ class _DetailScreenState extends State<DetailScreen> {
       return;
     }
     await ThemeMusicPlayer.instance.stopFor(widget.itemId);
-    final opened = await launchUrl(Uri.parse(urls.first), mode: LaunchMode.externalApplication);
-    if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Couldn\'t open the trailer.')));
+    if (!mounted) return;
+    final videoId = urls.map(TrailerScreen.videoIdFrom).whereType<String>().firstOrNull;
+    if (videoId == null) {
+      // Not a YouTube link (rare) — let the system handle it.
+      await launchUrl(Uri.parse(urls.first), mode: LaunchMode.externalApplication);
+      return;
     }
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TrailerScreen(videoId: videoId, title: name)));
+    if (mounted) _startThemeMusic();
   }
 
   void _showUnavailable(String feature) {

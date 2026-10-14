@@ -1366,6 +1366,66 @@ class JellyfinApiService {
     }
   }
 
+  // Standard segments first; if the server has none (the Intro Skipper
+  // plugin isn't enabled as a library's segment provider, or the server
+  // predates 10.10), ask Intro Skipper directly through its own endpoint.
+  Future<List<MediaSegment>> getSkipSegments(
+    String serverUrl,
+    String token,
+    String itemId,
+  ) async {
+    final standard = await getMediaSegments(serverUrl, token, itemId);
+    if (standard.isNotEmpty) return standard;
+    return _getIntroSkipperSegments(serverUrl, token, itemId);
+  }
+
+  // Intro Skipper's own API: /Episode/{id}/IntroSkipperSegments returns a map
+  // keyed by segment kind ("Introduction", "Credits", and on newer versions
+  // "Recap" / "Preview"), each with start/end in seconds.
+  Future<List<MediaSegment>> _getIntroSkipperSegments(
+    String serverUrl,
+    String token,
+    String itemId,
+  ) async {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    try {
+      final response = await _client.get(
+        Uri.parse('$cleanUrl/Episode/$itemId/IntroSkipperSegments'),
+        headers: authHeaders(token),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const [];
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) return const [];
+      final segments = <MediaSegment>[];
+      data.forEach((key, value) {
+        if (value is! Map<String, dynamic>) return;
+        if (value['Valid'] == false) return;
+        final kind = switch (key.toLowerCase()) {
+          'introduction' || 'intro' => MediaSegmentKind.intro,
+          'credits' || 'outro' => MediaSegmentKind.outro,
+          'recap' => MediaSegmentKind.recap,
+          'preview' => MediaSegmentKind.preview,
+          'commercial' => MediaSegmentKind.commercial,
+          _ => null,
+        };
+        if (kind == null) return;
+        final start = (value['IntroStart'] ?? value['Start']) as num?;
+        final end = (value['IntroEnd'] ?? value['End']) as num?;
+        if (start == null || end == null || end - start < 2) return;
+        segments.add(MediaSegment(
+          kind: kind,
+          start: Duration(milliseconds: (start * 1000).round()),
+          end: Duration(milliseconds: (end * 1000).round()),
+        ));
+      });
+      return segments;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   // Theme songs live alongside an item's files (theme.mp3 / theme-music
   // folders). For a series the server resolves its own theme; for a
   // collection, `InheritFromParent` falls back to nothing, which is fine.

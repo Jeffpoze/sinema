@@ -105,10 +105,21 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
           if (value.trim().isNotEmpty) _search(value.trim());
         },
         style: const TextStyle(color: Colors.white),
-        decoration: const InputDecoration(
+        // Pill-shaped, matching the web app's search field.
+        decoration: InputDecoration(
           hintText: 'Search movies, shows, music…',
-          hintStyle: TextStyle(color: Color(0xFFA5A7AC)),
-          border: InputBorder.none,
+          hintStyle: const TextStyle(color: Color(0xFFA5A7AC)),
+          prefixIcon: const Icon(Icons.search, color: Color(0xFFA5A7AC), size: 20),
+          isDense: true,
+          filled: true,
+          fillColor: const Color(0xFF191A1E),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(24),
+            borderSide: BorderSide(color: Theme.of(context).colorScheme.primary.withValues(alpha: .8)),
+          ),
         ),
       ),
       actions: [

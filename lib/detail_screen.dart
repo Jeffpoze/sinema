@@ -588,8 +588,15 @@ class _DetailScreenState extends State<DetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _InfoLine('Added to library', formatDate(dateCreated)),
-            _InfoLine('Last played', lastPlayed == null ? 'Never' : formatDate(lastPlayed)),
-            _InfoLine('Play count', '${playCount ?? 0}'),
+            if (lastPlayed == null && (playCount ?? 0) == 0)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('You haven\'t watched this yet. Once you do, when and how often will show up here.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              )
+            else ...[
+              _InfoLine('Last played', lastPlayed == null ? 'Never' : formatDate(lastPlayed)),
+              _InfoLine('Play count', '${playCount ?? 0}'),
+            ],
           ],
         ),
         actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
@@ -614,7 +621,6 @@ class _DetailScreenState extends State<DetailScreen> {
               const Divider(height: 30, color: Color(0xFF252525)),
               _MoreAction(icon: _isFavorite ? Icons.bookmark_remove_outlined : Icons.bookmark_add_outlined, label: _isFavorite ? 'Remove from List' : 'Add to List', onTap: () { Navigator.pop(context); _toggleFavorite(); }),
               _MoreAction(icon: Icons.playlist_add, label: 'Add To Playlist / Collection', onTap: () { Navigator.pop(context); _showUnavailable('Playlists'); }),
-              _MoreAction(icon: Icons.forum_outlined, label: 'Start a Discussion', onTap: () { Navigator.pop(context); _showUnavailable('Discussions'); }),
               if (_item?['Type'] == 'Episode') _MoreAction(icon: Icons.tv_outlined, label: 'Go to Show', onTap: () => Navigator.pop(context)),
               _MoreAction(icon: _isWatched ? Icons.remove_done_outlined : Icons.done_all, label: _isWatched ? 'Mark as Unwatched' : 'Mark as Watched', onTap: () { Navigator.pop(context); _setWatched(!_isWatched); }),
               _MoreAction(icon: Icons.history, label: 'History', onTap: () { Navigator.pop(context); _showHistory(); }),

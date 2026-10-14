@@ -1,0 +1,33 @@
+name: Analyze
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: 'stable'
+      - run: flutter pub get
+      - name: Analyze
+        shell: bash
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings > analyze.log 2>&1 && status=0 || status=$?
+          # One annotation per file so every error is readable from the run
+          # summary (GitHub caps the number of annotations per step).
+          grep -E "^\s*(error|warning) " analyze.log > problems.txt || true
+          for f in $(sed -E 's/.* • ([^ ]+\.dart):[0-9]+:[0-9]+ • .*/\1/' problems.txt | sort -u | head -9); do
+            msg=$(grep -F " $f:" problems.txt | head -25 | sed -E 's/^\s+//' | awk '{printf "%s%%0A", $0}')
+            echo "::error file=$f::${msg}"
+          done
+          if [ "$status" != "0" ] && [ ! -s problems.txt ]; then
+            echo "::error::$(tail -20 analyze.log | awk '{printf "%s%%0A", $0}')"
+          fi
+          cat analyze.log
+          exit $status

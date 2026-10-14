@@ -471,7 +471,7 @@ class _DetailScreenState extends State<DetailScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (context) => _EpisodeListSheet(
         serverUrl: widget.serverUrl,
         userId: widget.userId,
@@ -681,7 +681,7 @@ class _DetailScreenState extends State<DetailScreen> {
     final selectedSeasonName = _asString(_seasons.whereType<Map<String, dynamic>>().firstWhere((s) => s['Id'] == _selectedSeasonId, orElse: () => const {})['Name']);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF090A0C),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           // A softly blurred, dimmed backdrop behind the whole page so the
@@ -701,14 +701,14 @@ class _DetailScreenState extends State<DetailScreen> {
                 ),
               ),
             ),
-          if (backdropUrl != null) const Positioned.fill(child: ColoredBox(color: Color(0xCC090A0C))),
+          if (backdropUrl != null) Positioned.fill(child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: .8))),
           CustomScrollView(
             slivers: [
               SliverAppBar(
                 expandedHeight: 460,
                 pinned: true,
                 automaticallyImplyLeading: false,
-                backgroundColor: const Color(0xFF090A0C).withValues(alpha: .85),
+                backgroundColor: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: .85),
                 leading: Padding(
                   padding: const EdgeInsets.all(8),
                   child: IconButton(
@@ -740,8 +740,8 @@ class _DetailScreenState extends State<DetailScreen> {
                           fit: StackFit.expand,
                           children: [
                             SinemaImage(imageUrl: backdropUrl, httpHeaders: JellyfinApiService.authHeaders(widget.token), fit: BoxFit.cover, memCacheWidth: 1200),
-                            const DecoratedBox(
-                              decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Color(0xFF090A0C)])),
+                            DecoratedBox(
+                              decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Theme.of(context).scaffoldBackgroundColor])),
                             ),
                             Positioned(
                               left: 24,

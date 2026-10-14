@@ -102,6 +102,26 @@ const accentColorOptions = [
   AccentColorOption('Silver', Color(0xFFB0BEC5)),
 ];
 
+// Whole-app background themes. All dark (the UI's greys, artwork overlays and
+// player chrome are tuned for a dark canvas); each shifts the base tint.
+class AppThemeOption {
+  const AppThemeOption(this.id, this.name, this.background, this.surface);
+  final String id;
+  final String name;
+  final Color background;
+  final Color surface;
+}
+
+const appThemeOptions = [
+  AppThemeOption('midnight', 'Midnight', Color(0xFF090A0C), Color(0xFF141518)),
+  AppThemeOption('oled', 'OLED Black', Color(0xFF000000), Color(0xFF0E0E10)),
+  AppThemeOption('slate', 'Slate', Color(0xFF0B0F16), Color(0xFF151B25)),
+  AppThemeOption('navy', 'Navy', Color(0xFF070B1A), Color(0xFF111833)),
+  AppThemeOption('plum', 'Plum', Color(0xFF110A14), Color(0xFF1D1322)),
+  AppThemeOption('forest', 'Forest', Color(0xFF07100C), Color(0xFF111C16)),
+  AppThemeOption('mocha', 'Mocha', Color(0xFF110D0A), Color(0xFF1E1813)),
+];
+
 const skipIntervalOptions = [5, 10, 15, 30, 60];
 
 /// Kept as plain strings (not the player's StreamQuality enum) so this file
@@ -129,11 +149,15 @@ class SettingsController extends ChangeNotifier {
   static const _radarrUrlKey = 'settings.radarrUrl';
   static const _radarrApiKeyKey = 'settings.radarrApiKey';
   static const _themeMusicKey = 'settings.themeMusic';
+  static const _appThemeKey = 'settings.appTheme';
   static const _autoPlayNextKey = 'settings.autoPlayNext';
   static const _autoSkipIntroKey = 'settings.autoSkipIntro';
 
   Color _accentColor = accentColorOptions.first.color;
   Color get accentColor => _accentColor;
+
+  AppThemeOption _appTheme = appThemeOptions.first;
+  AppThemeOption get appTheme => _appTheme;
 
   int _skipSeconds = 15;
   int get skipSeconds => _skipSeconds;
@@ -194,6 +218,10 @@ class SettingsController extends ChangeNotifier {
     if (storedSkip != null && skipIntervalOptions.contains(storedSkip)) _skipSeconds = storedSkip;
     final storedQuality = prefs.getString(_defaultQualityKey);
     if (storedQuality != null && defaultQualityOptions.contains(storedQuality)) _defaultQuality = storedQuality;
+    final storedTheme = prefs.getString(_appThemeKey);
+    for (final option in appThemeOptions) {
+      if (option.id == storedTheme) _appTheme = option;
+    }
     _themeMusic = prefs.getBool(_themeMusicKey) ?? true;
     _autoPlayNext = prefs.getBool(_autoPlayNextKey) ?? true;
     _autoSkipIntro = prefs.getBool(_autoSkipIntroKey) ?? false;
@@ -232,6 +260,13 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_defaultQualityKey, quality);
+  }
+
+  Future<void> setAppTheme(AppThemeOption option) async {
+    _appTheme = option;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_appThemeKey, option.id);
   }
 
   Future<void> setThemeMusic(bool value) async {

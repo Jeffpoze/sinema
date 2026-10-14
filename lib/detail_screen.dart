@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:ui';
 
 import 'package:better_native_video_player/better_native_video_player.dart' show VideoDownloadStatus;
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +11,7 @@ import 'manage_screen.dart';
 import 'player_screen.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'widgets/sinema_image.dart';
 
 // `dynamic as Type?` throws if the value is non-null but the wrong type —
 // it does not return null. These treat an unexpected type as absent instead
@@ -596,7 +596,7 @@ class _DetailScreenState extends State<DetailScreen> {
             Positioned.fill(
               child: ImageFiltered(
                 imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40, tileMode: TileMode.decal),
-                child: CachedNetworkImage(
+                child: SinemaImage(
                   imageUrl: backdropUrl,
                   httpHeaders: JellyfinApiService.authHeaders(widget.token),
                   fit: BoxFit.cover,
@@ -642,7 +642,7 @@ class _DetailScreenState extends State<DetailScreen> {
                       : Stack(
                           fit: StackFit.expand,
                           children: [
-                            CachedNetworkImage(imageUrl: backdropUrl, httpHeaders: JellyfinApiService.authHeaders(widget.token), fit: BoxFit.cover, memCacheWidth: 1200),
+                            SinemaImage(imageUrl: backdropUrl, httpHeaders: JellyfinApiService.authHeaders(widget.token), fit: BoxFit.cover, memCacheWidth: 1200),
                             const DecoratedBox(
                               decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Color(0xFF090A0C)])),
                             ),
@@ -654,7 +654,7 @@ class _DetailScreenState extends State<DetailScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   if (logoUrl != null)
-                                    CachedNetworkImage(
+                                    SinemaImage(
                                       imageUrl: logoUrl,
                                       httpHeaders: JellyfinApiService.authHeaders(widget.token),
                                       memCacheWidth: 800,
@@ -1136,7 +1136,7 @@ class _CastMember extends StatelessWidget {
                 height: 72,
                 child: imageUrl == null
                     ? const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.person_outline, color: Colors.white24))
-                    : CachedNetworkImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 220, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.person_outline, color: Colors.white24))),
+                    : SinemaImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 220, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.person_outline, color: Colors.white24))),
               ),
             ),
             const SizedBox(height: 6),
@@ -1223,7 +1223,7 @@ class _EpisodeCard extends StatelessWidget {
                       height: 96,
                       child: imageUrl == null
                           ? const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.movie_outlined, color: Colors.white24))
-                          : CachedNetworkImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 500, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
+                          : SinemaImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 500, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
                     ),
                   ),
                   if (isWatched)
@@ -1388,7 +1388,7 @@ class _EpisodeListRow extends StatelessWidget {
                 height: 70,
                 child: imageUrl == null
                     ? const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.movie_outlined, color: Colors.white24))
-                    : CachedNetworkImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 400, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
+                    : SinemaImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 400, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
               ),
             ),
             if (indexNumber != null)

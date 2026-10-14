@@ -1,8 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'services/jellyfin_api_service.dart';
+import 'widgets/sinema_image.dart';
 
 String? _asString(dynamic value) => value is String ? value : null;
 int? _asInt(dynamic value) => value is num ? value.toInt() : null;
@@ -645,7 +645,7 @@ class _ArtworkSection extends StatelessWidget {
                       borderRadius: BorderRadius.circular(6),
                       child: url == null
                           ? Container(width: 160, height: 90, color: const Color(0xFF1B1D22))
-                          : CachedNetworkImage(imageUrl: url, width: 160, height: 90, fit: BoxFit.cover),
+                          : SinemaImage(imageUrl: url, width: 160, height: 90, fit: BoxFit.cover),
                     ),
                     if (width != null && height != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('$width x $height', style: const TextStyle(fontSize: 11, color: Color(0xFFA5A7AC)))),
                   ],

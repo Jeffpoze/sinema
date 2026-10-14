@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
 import 'iptv_repository.dart';
+import 'live_tv_screen.dart' show ensureUnlocked, playCatchup;
+import 'multiview_screen.dart';
 
 int _nextIptvControllerId = 50000;
 
@@ -143,21 +145,125 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     }
   }
 
-  void _zap(int delta) {
-    if (widget.items.length < 2) return;
-    _index = (_index + delta) % widget.items.length;
-    if (_index < 0) _index += widget.items.length;
-    _triedHlsFallback = false;
-    _open();
-  }
+  // Channel the viewer was on before the current one (TiviMate's "last
+  // channel" / recall button).
+  int? _previousIndex;
+  Timer? _sleepTimer;
+  DateTime? _sleepAt;
 
-  void _playAt(int index) {
+  void _switchTo(int index) {
+    if (index == _index) return;
     setState(() {
+      _previousIndex = _index;
       _index = index;
       _showChannelList = false;
     });
     _triedHlsFallback = false;
     _open();
+  }
+
+  void _zap(int delta) {
+    final n = widget.items.length;
+    if (n < 2) return;
+    var next = _index;
+    // Step past channels behind the parental lock.
+    for (var i = 0; i < n; i++) {
+      next = (next + delta) % n;
+      if (next < 0) next += n;
+      if (!_repo.isLocked(widget.items[next])) break;
+    }
+    _switchTo(next);
+  }
+
+  Future<void> _playAt(int index) async {
+    setState(() => _showChannelList = false);
+    if (!await ensureUnlocked(context, widget.items[index])) return;
+    _switchTo(index);
+  }
+
+  void _recall() {
+    final previous = _previousIndex;
+    if (previous != null && previous < widget.items.length) _switchTo(previous);
+  }
+
+  // Type a channel number, like a remote's number keys.
+  Future<void> _enterNumber() async {
+    final controller = TextEditingController();
+    final number = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Go to Channel'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(hintText: 'Channel number'),
+          onSubmitted: (v) => Navigator.of(dialogContext).pop(int.tryParse(v.trim())),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(int.tryParse(controller.text.trim())), child: const Text('Go')),
+        ],
+      ),
+    );
+    if (number == null) return;
+    var index = widget.items.indexWhere((c) => c.number == number);
+    // Playlists without channel numbers: use the position in the list.
+    if (index < 0 && number >= 1 && number <= widget.items.length && widget.items.every((c) => c.number == null)) index = number - 1;
+    if (index < 0) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No channel $number in this list.')));
+      return;
+    }
+    _playAt(index);
+  }
+
+  Future<void> _chooseSleepTimer() async {
+    final now = _repo.nowPlaying(_item);
+    final choice = await showModalBottomSheet<Duration?>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Sleep Timer', style: TextStyle(fontWeight: FontWeight.w700))),
+            for (final minutes in [15, 30, 45, 60, 90, 120])
+              ListTile(title: Text('$minutes minutes'), onTap: () => Navigator.of(sheetContext).pop(Duration(minutes: minutes))),
+            if (_isLive && now != null)
+              ListTile(title: Text('End of ${now.title}'), onTap: () => Navigator.of(sheetContext).pop(now.end.difference(DateTime.now()))),
+            if (_sleepAt != null) ListTile(title: const Text('Turn Off'), onTap: () => Navigator.of(sheetContext).pop(Duration.zero)),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    _sleepTimer?.cancel();
+    if (choice == Duration.zero) {
+      setState(() => _sleepAt = null);
+      return;
+    }
+    setState(() => _sleepAt = DateTime.now().add(choice));
+    _sleepTimer = Timer(choice, () {
+      if (mounted) Navigator.of(context).maybePop();
+    });
+  }
+
+  String? get _sleepLabel {
+    final at = _sleepAt;
+    if (at == null) return null;
+    final left = at.difference(DateTime.now());
+    return left.inMinutes >= 1 ? '${left.inMinutes}m' : '<1m';
+  }
+
+  void _restartProgram() {
+    final now = _repo.nowPlaying(_item);
+    if (now == null) return;
+    playCatchup(context, _item, now);
+  }
+
+  void _openMultiView() {
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+      builder: (_) => MultiViewScreen(channels: widget.items, initial: [_item]),
+    ));
   }
 
   Future<void> _togglePlay() async {
@@ -187,6 +293,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   void dispose() {
     _pollTimer?.cancel();
     _clockTimer?.cancel();
+    _sleepTimer?.cancel();
     _controller.removeActivityListener(_onActivity);
     _controller.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -215,6 +322,12 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
                 onZapDown: () => _zap(1),
                 onSeekBy: _seekBy,
                 onOpenChannelList: () => setState(() => _showChannelList = true),
+                onRecall: _isLive && _previousIndex != null ? _recall : null,
+                onEnterNumber: _isLive && widget.items.length > 1 ? _enterNumber : null,
+                onSleepTimer: _chooseSleepTimer,
+                sleepLabel: _sleepLabel,
+                onRestart: _isLive && _repo.nowPlaying(_item) != null && _repo.canCatchup(_item, _repo.nowPlaying(_item)!) ? _restartProgram : null,
+                onMultiView: _isLive && widget.items.length > 1 ? _openMultiView : null,
               ),
             ),
             if (_isBuffering && _error == null)
@@ -278,6 +391,12 @@ class _Controls extends StatelessWidget {
     required this.onZapDown,
     required this.onSeekBy,
     required this.onOpenChannelList,
+    required this.onRecall,
+    required this.onEnterNumber,
+    required this.onSleepTimer,
+    required this.sleepLabel,
+    required this.onRestart,
+    required this.onMultiView,
   });
 
   final IptvItem item;
@@ -292,6 +411,12 @@ class _Controls extends StatelessWidget {
   final VoidCallback onZapDown;
   final ValueChanged<Duration> onSeekBy;
   final VoidCallback onOpenChannelList;
+  final VoidCallback? onRecall;
+  final VoidCallback? onEnterNumber;
+  final VoidCallback onSleepTimer;
+  final String? sleepLabel;
+  final VoidCallback? onRestart;
+  final VoidCallback? onMultiView;
 
   String _time(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
@@ -362,6 +487,17 @@ class _Controls extends StatelessWidget {
                   ),
                   if (isLive && canZap)
                     IconButton(onPressed: onOpenChannelList, icon: const Icon(Icons.format_list_bulleted, size: 28), tooltip: 'Channels'),
+                  if (onEnterNumber != null)
+                    IconButton(onPressed: onEnterNumber, icon: const Icon(Icons.dialpad, size: 26), tooltip: 'Channel number'),
+                  if (onMultiView != null)
+                    IconButton(onPressed: onMultiView, icon: const Icon(Icons.grid_view_rounded, size: 26), tooltip: 'Multi-view'),
+                  sleepLabel == null
+                      ? IconButton(onPressed: onSleepTimer, icon: const Icon(Icons.bedtime_outlined, size: 26), tooltip: 'Sleep timer')
+                      : TextButton.icon(
+                          onPressed: onSleepTimer,
+                          icon: Icon(Icons.bedtime, size: 20, color: accent),
+                          label: Text(sleepLabel!, style: TextStyle(color: accent)),
+                        ),
                   if (Theme.of(context).platform == TargetPlatform.iOS)
                     IconButton(onPressed: () => controller.showAirPlayPicker(), icon: const Icon(Icons.airplay, size: 28), tooltip: 'AirPlay'),
                   IconButton(onPressed: onClose, icon: const Icon(Icons.close, size: 30)),
@@ -376,11 +512,15 @@ class _Controls extends StatelessWidget {
               children: [
                 if (!isLive)
                   IconButton(iconSize: 44, onPressed: () => onSeekBy(const Duration(seconds: -10)), icon: const Icon(Icons.replay_10)),
+                if (isLive && onRestart != null)
+                  IconButton(iconSize: 40, onPressed: onRestart, icon: const Icon(Icons.restart_alt), tooltip: 'Watch from start'),
                 const SizedBox(width: 48),
                 IconButton(iconSize: 64, onPressed: onTogglePlay, icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow)),
                 const SizedBox(width: 48),
                 if (!isLive)
                   IconButton(iconSize: 44, onPressed: () => onSeekBy(const Duration(seconds: 10)), icon: const Icon(Icons.forward_10)),
+                if (isLive && onRecall != null)
+                  IconButton(iconSize: 40, onPressed: onRecall, icon: const Icon(Icons.history_toggle_off), tooltip: 'Last channel'),
               ],
             ),
           ),

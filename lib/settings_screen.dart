@@ -5,6 +5,7 @@ import 'arr_service.dart';
 import 'main.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'watch_history_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.settings, required this.session});
@@ -17,6 +18,7 @@ class SettingsScreen extends StatelessWidget {
         body: ListView(
           children: [
             _SettingsRow(title: 'Account', subtitle: session.username, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AccountScreen(session: session, settings: settings)))),
+            _SettingsRow(title: 'Watch History', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WatchHistoryScreen(session: session, settings: settings)))),
             _SettingsRow(title: 'Appearance', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AppearanceScreen(settings: settings)))),
             _SettingsRow(title: 'Playback', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlaybackScreen(settings: settings)))),
             _SettingsRow(title: 'Ratings & Logos', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RatingsScreen(settings: settings)))),

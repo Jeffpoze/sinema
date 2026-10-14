@@ -566,6 +566,21 @@ class JellyfinApiService {
     );
   }
 
+  // Everything the user has finished, most recent first — the data behind
+  // the Watch History screen.
+  Future<List<dynamic>> getWatchHistory(
+    String serverUrl,
+    String userId,
+    String token, {
+    int limit = 100,
+  }) {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    return _getItemList(
+      '$cleanUrl/Users/$userId/Items?Recursive=true&Filters=IsPlayed&IncludeItemTypes=Movie,Episode&SortBy=DatePlayed&SortOrder=Descending&Limit=$limit&Fields=PrimaryImageTag,ImageTags,SeriesPrimaryImageTag,UserData',
+      token,
+    );
+  }
+
   Future<List<dynamic>> getRecentItemsForView(
     String serverUrl,
     String userId,

@@ -32,6 +32,11 @@ extension on StreamQuality {
 // across a list -> detail -> player navigation stack).
 int _nextControllerId = 1;
 
+// Moving to the next episode replaces one PlayerScreen with another, and the
+// outgoing player is disposed only after the new one is already up. Count
+// live players so only the last one out restores portrait orientation.
+int _livePlayers = 0;
+
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
     super.key,
@@ -101,6 +106,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _isPlaying = true;
   StreamSubscription<PlayerActivityState>? _playerStateSub;
+  // After a tap, trust the optimistic icon briefly while the native player
+  // catches up, then go back to mirroring what it's actually doing.
+  DateTime _lastManualToggle = DateTime.fromMillisecondsSinceEpoch(0);
+  Duration _lastPolledPosition = Duration.zero;
 
   // Intro / recap / credits markers from the server, and where we are in them.
   List<MediaSegment> _segments = const [];
@@ -120,6 +129,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    _livePlayers++;
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -147,14 +157,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _playerStateSub = _controller.playerStateStream.listen((state) {
       if (mounted) setState(() => _isPlaying = state.isPlaying);
     });
-    if (!widget.isAudioOnly) {
-      // Polled rather than subscribing to positionStream, which the progress
-      // bar already listens to.
-      _positionTimer = Timer.periodic(
-        const Duration(milliseconds: 500),
-        (_) => _handlePosition(_controller.currentPosition),
-      );
-    }
+    // Polled rather than subscribing to positionStream, which the progress
+    // bar already listens to. Also keeps the play/pause icon honest: the
+    // state stream doesn't reliably report autoplay starting, which left a
+    // Play icon showing over a video that was already playing.
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      _syncPlayingState();
+      if (!widget.isAudioOnly) _handlePosition(_controller.currentPosition);
+    });
     if (!widget.isAudioOnly && widget.localFilePath == null) {
       // Jellyfin's transcode has its own idle "kill timer" that tears down
       // the ffmpeg process if it stops hearing from the client — server logs
@@ -202,7 +212,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!widget.isAudioOnly) {
       // Fire-and-forget: markers arriving a moment after playback starts is
       // fine, and a server without them just never shows a Skip button.
-      _api.getMediaSegments(widget.serverUrl, widget.token, widget.itemId).then((segments) {
+      _api.getSkipSegments(widget.serverUrl, widget.token, widget.itemId).then((segments) {
         if (mounted) setState(() => _segments = segments);
       });
     }
@@ -457,7 +467,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _openStream(position: position);
   }
 
+  void _syncPlayingState() {
+    if (!mounted || _castSession != null) return;
+    if (DateTime.now().difference(_lastManualToggle) < const Duration(milliseconds: 1500)) return;
+    // The clock moving is the ground truth for "playing"; only when it's
+    // standing still do we fall back to the plugin's own state flag.
+    final position = _controller.currentPosition;
+    final advanced = position > _lastPolledPosition;
+    _lastPolledPosition = position;
+    final playing = advanced || _controller.activityState.isPlaying;
+    if (playing != _isPlaying) setState(() => _isPlaying = playing);
+  }
+
   Future<void> _togglePlayPause() async {
+    _lastManualToggle = DateTime.now();
     final wasPlaying = _isPlaying;
     setState(() => _isPlaying = !wasPlaying);
     if (wasPlaying) {
@@ -797,8 +820,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
     _controller.dispose();
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _livePlayers--;
+    if (_livePlayers == 0) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
@@ -1623,7 +1649,12 @@ class _SeekIcon extends StatelessWidget {
   Widget build(BuildContext context) => Stack(
     alignment: Alignment.center,
     children: [
-      Icon(forward ? Icons.forward : Icons.replay, color: Colors.white, size: 46),
+      // Material has no matching "forward" circle glyph (Icons.forward is a
+      // mail-style arrow), so mirror the replay circle instead.
+      Transform.flip(
+        flipX: forward,
+        child: const Icon(Icons.replay, color: Colors.white, size: 46),
+      ),
       Padding(
         padding: const EdgeInsets.only(top: 3),
         child: Text(

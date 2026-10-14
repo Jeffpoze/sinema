@@ -114,19 +114,51 @@ class AppearanceScreen extends StatelessWidget {
   const AppearanceScreen({super.key, required this.settings});
   final SettingsController settings;
 
+  bool get _isCustomAccent => !accentColorOptions.any((o) => o.color.toARGB32() == settings.accentColor.toARGB32());
+
+  Future<void> _pickCustomAccent(BuildContext context) async {
+    final picked = await showDialog<Color>(
+      context: context,
+      builder: (_) => _CustomColorDialog(initial: settings.accentColor),
+    );
+    if (picked != null) settings.setAccentColor(picked);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('APPEARANCE', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1.8))),
-        body: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            const Text('Theme Color', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            const Text('Choose the accent color used throughout the app.', style: TextStyle(color: Color(0xFFA5A7AC))),
-            const SizedBox(height: 20),
-            AnimatedBuilder(
-              animation: settings,
-              builder: (context, _) => Wrap(
+        body: AnimatedBuilder(
+          animation: settings,
+          builder: (context, _) => ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              const Text('App Theme', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              const Text('The background tint used across every screen.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              const SizedBox(height: 16),
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 2.4,
+                children: [
+                  for (final option in appThemeOptions)
+                    _ThemeTile(
+                      option: option,
+                      accent: settings.accentColor,
+                      selected: settings.appTheme.id == option.id,
+                      onTap: () => settings.setAppTheme(option),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              const Text('Accent Color', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              const Text('Used for buttons, highlights and progress bars.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              const SizedBox(height: 20),
+              Wrap(
                 spacing: 16,
                 runSpacing: 16,
                 children: [
@@ -136,19 +168,127 @@ class AppearanceScreen extends StatelessWidget {
                       selected: settings.accentColor.toARGB32() == option.color.toARGB32(),
                       onTap: () => settings.setAccentColor(option.color),
                     ),
+                  _ColorSwatch(
+                    option: AccentColorOption('Custom', _isCustomAccent ? settings.accentColor : const Color(0xFF3A3D44)),
+                    selected: _isCustomAccent,
+                    icon: Icons.colorize,
+                    onTap: () => _pickCustomAccent(context),
+                  ),
                 ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
 }
 
+class _ThemeTile extends StatelessWidget {
+  const _ThemeTile({required this.option, required this.accent, required this.selected, required this.onTap});
+  final AppThemeOption option;
+  final Color accent;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: option.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: selected ? accent : Colors.white12, width: selected ? 2.5 : 1),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(color: option.surface, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.white10)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Text(option.name, style: const TextStyle(fontWeight: FontWeight.w600))),
+              if (selected) Icon(Icons.check_circle, color: accent, size: 20),
+            ],
+          ),
+        ),
+      );
+}
+
+// A hue ring's worth of control without a dependency: hue + saturation +
+// brightness sliders with a live preview.
+class _CustomColorDialog extends StatefulWidget {
+  const _CustomColorDialog({required this.initial});
+  final Color initial;
+
+  @override
+  State<_CustomColorDialog> createState() => _CustomColorDialogState();
+}
+
+class _CustomColorDialogState extends State<_CustomColorDialog> {
+  late HSVColor _color = HSVColor.fromColor(widget.initial);
+
+  Widget _slider(String label, double value, double max, List<Color> track, ValueChanged<double> onChanged) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFFA5A7AC))),
+          const SizedBox(height: 6),
+          Container(
+            height: 10,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(5), gradient: LinearGradient(colors: track)),
+          ),
+          Slider(value: value, max: max, onChanged: onChanged, activeColor: Colors.white, inactiveColor: Colors.white24),
+        ],
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = _color.toColor();
+    return AlertDialog(
+      title: const Text('Custom Accent'),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              height: 56,
+              decoration: BoxDecoration(color: preview, borderRadius: BorderRadius.circular(12)),
+              alignment: Alignment.center,
+              child: Text(
+                '#${preview.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+                style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _slider('Hue', _color.hue, 360, [
+              for (var h = 0; h <= 360; h += 60) HSVColor.fromAHSV(1, h.toDouble(), 1, 1).toColor(),
+            ], (v) => setState(() => _color = _color.withHue(v))),
+            _slider('Saturation', _color.saturation, 1, [
+              _color.withSaturation(0).toColor(),
+              _color.withSaturation(1).toColor(),
+            ], (v) => setState(() => _color = _color.withSaturation(v))),
+            _slider('Brightness', _color.value, 1, [
+              Colors.black,
+              _color.withValue(1).toColor(),
+            ], (v) => setState(() => _color = _color.withValue(v.clamp(0.25, 1.0)))),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.of(context).pop(preview), child: const Text('Use Color')),
+      ],
+    );
+  }
+}
+
 class _ColorSwatch extends StatelessWidget {
-  const _ColorSwatch({required this.option, required this.selected, required this.onTap});
+  const _ColorSwatch({required this.option, required this.selected, required this.onTap, this.icon});
   final AccentColorOption option;
   final bool selected;
   final VoidCallback onTap;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -163,7 +303,7 @@ class _ColorSwatch extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: selected ? Border.all(color: Colors.white, width: 3) : null,
               ),
-              child: selected ? const Icon(Icons.check, color: Colors.white) : null,
+              child: selected ? const Icon(Icons.check, color: Colors.white) : (icon == null ? null : Icon(icon, color: Colors.white70)),
             ),
             const SizedBox(height: 8),
             Text(option.name, style: const TextStyle(fontSize: 12, color: Color(0xFFA5A7AC))),

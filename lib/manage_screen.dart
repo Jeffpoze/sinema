@@ -94,9 +94,9 @@ class _ManageScreenState extends State<ManageScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF0A0B0D),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       leading: IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop(false)),
       title: Text(widget.itemName, style: const TextStyle(fontWeight: FontWeight.w700)),
       centerTitle: true,
@@ -272,9 +272,9 @@ class _EditMetadataScreenState extends State<EditMetadataScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF0A0B0D),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new), onPressed: () => Navigator.of(context).pop(false)),
       title: Column(children: [Text(widget.itemName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)), const Text('Edit Metadata', style: TextStyle(fontSize: 12, color: Color(0xFFA5A7AC)))]),
       centerTitle: true,
@@ -421,9 +421,9 @@ class _EditTagsScreenState extends State<EditTagsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF0A0B0D),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new), onPressed: () => Navigator.of(context).pop(false)),
       title: Column(children: [Text(widget.itemName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)), const Text('Edit Tags', style: TextStyle(fontSize: 12, color: Color(0xFFA5A7AC)))]),
       centerTitle: true,
@@ -563,9 +563,9 @@ class _ChangeArtworkScreenState extends State<ChangeArtworkScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF0A0B0D),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new), onPressed: () => Navigator.of(context).pop(false)),
       title: Column(children: [Text(widget.itemName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)), const Text('Change Artwork', style: TextStyle(fontSize: 12, color: Color(0xFFA5A7AC)))]),
       centerTitle: true,
@@ -711,9 +711,9 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
     final subtitleStreams = _streams.whereType<Map<String, dynamic>>().where((s) => s['Type'] == 'Subtitle').toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0A0B0D),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new), onPressed: () => Navigator.of(context).pop()),
         title: Column(children: [Text(widget.itemName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)), const Text('File Info', style: TextStyle(fontSize: 12, color: Color(0xFFA5A7AC)))]),
         centerTitle: true,

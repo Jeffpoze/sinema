@@ -50,18 +50,24 @@ class SinemaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const background = Color(0xFF090A0C);
     return AnimatedBuilder(
       animation: settings,
-      builder: (context, _) => MaterialApp(
+      builder: (context, _) {
+        final background = settings.appTheme.background;
+        final surface = settings.appTheme.surface;
+        return MaterialApp(
         title: 'Sinema',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark().copyWith(
           scaffoldBackgroundColor: background,
+          canvasColor: background,
           colorScheme: ColorScheme.dark(
             primary: settings.accentColor,
-            surface: const Color(0xFF141518),
+            surface: surface,
           ),
+          drawerTheme: DrawerThemeData(backgroundColor: surface),
+          bottomSheetTheme: BottomSheetThemeData(backgroundColor: surface, modalBackgroundColor: surface),
+          dialogTheme: DialogThemeData(backgroundColor: surface),
           appBarTheme: const AppBarTheme(
             backgroundColor: Colors.transparent,
             elevation: 0,
@@ -99,7 +105,8 @@ class SinemaApp extends StatelessWidget {
         home: initialSession != null
             ? HomePage(session: initialSession!, settings: settings)
             : AuthenticationScreen(settings: settings),
-      ),
+      );
+      },
     );
   }
 }
@@ -475,7 +482,7 @@ class _HomePageState extends State<HomePage> {
     final filter = await showModalBottomSheet<LibraryFilter>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0A0B0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (context) => _LibraryFilterSheet(
         serverUrl: widget.session.serverUrl,
         userId: widget.session.userId,
@@ -1058,12 +1065,12 @@ class _HeroCard extends StatelessWidget {
                 fit: BoxFit.cover,
                 memCacheWidth: 1200,
               ),
-            const DecoratedBox(
+            DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Color(0xFF090A0C)],
+                  colors: [Colors.transparent, Theme.of(context).scaffoldBackgroundColor],
                 ),
               ),
             ),

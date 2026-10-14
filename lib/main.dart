@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'calendar_screen.dart';
 import 'detail_screen.dart';
+import 'livetv/live_tv_screen.dart';
 import 'player_screen.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
@@ -520,6 +521,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _openLiveTv() {
+    Navigator.of(context).pop();
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveTvScreen()));
+  }
+
   void _openNetworks() {
     Navigator.of(context).pop();
     Navigator.of(context).push(
@@ -584,6 +590,7 @@ class _HomePageState extends State<HomePage> {
         onSettings: _openSettings,
         onCalendar: _openCalendar,
         onNetworks: _openNetworks,
+        onLiveTv: _openLiveTv,
       ),
       body: _selectedCategoryId == null
           ? ListView(
@@ -642,6 +649,7 @@ class _CategoryDrawer extends StatelessWidget {
     required this.onSettings,
     required this.onCalendar,
     required this.onNetworks,
+    required this.onLiveTv,
   });
   final List<dynamic> libraryViews;
   final String? selectedId;
@@ -649,6 +657,7 @@ class _CategoryDrawer extends StatelessWidget {
   final VoidCallback onSettings;
   final VoidCallback onCalendar;
   final VoidCallback onNetworks;
+  final VoidCallback onLiveTv;
 
   @override
   Widget build(BuildContext context) => Drawer(
@@ -687,6 +696,11 @@ class _CategoryDrawer extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 20),
             child: Divider(color: Color(0xFF1B1D22)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.connected_tv_outlined),
+            title: const Text('Live TV'),
+            onTap: onLiveTv,
           ),
           ListTile(
             leading: const Icon(Icons.calendar_today_outlined),

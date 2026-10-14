@@ -10,6 +10,17 @@ import '../settings_controller.dart';
 Duration ticksToDuration(dynamic ticks) =>
     Duration(microseconds: ((ticks as num?) ?? 0).toInt() ~/ 10);
 
+enum MediaServerType { jellyfin, emby }
+
+extension MediaServerTypeLabel on MediaServerType {
+  String get label => switch (this) {
+    MediaServerType.jellyfin => 'Jellyfin',
+    MediaServerType.emby => 'Emby',
+  };
+}
+
+// A signed-in media server account. Named for Jellyfin historically; Emby
+// speaks the same API (Jellyfin began as a fork of it), so both use this.
 class JellyfinSession {
   const JellyfinSession({
     required this.serverUrl,
@@ -17,7 +28,38 @@ class JellyfinSession {
     required this.token,
     required this.username,
     this.isAdministrator = false,
+    this.serverType = MediaServerType.jellyfin,
+    this.serverName = '',
   });
+
+  final MediaServerType serverType;
+  // The server's own friendly name, when it reports one.
+  final String serverName;
+
+  // Stable identity for the saved-servers list.
+  String get accountId => '${serverUrl.toLowerCase()}|$userId';
+
+  String get displayName => serverName.isNotEmpty ? serverName : (Uri.tryParse(serverUrl)?.host ?? serverUrl);
+
+  Map<String, dynamic> toJson() => {
+    'serverUrl': serverUrl,
+    'userId': userId,
+    'token': token,
+    'username': username,
+    'isAdministrator': isAdministrator,
+    'serverType': serverType.name,
+    'serverName': serverName,
+  };
+
+  static JellyfinSession fromJson(Map<String, dynamic> j) => JellyfinSession(
+    serverUrl: j['serverUrl'] as String,
+    userId: j['userId'] as String,
+    token: j['token'] as String,
+    username: (j['username'] as String?) ?? '',
+    isAdministrator: j['isAdministrator'] == true,
+    serverType: j['serverType'] == 'emby' ? MediaServerType.emby : MediaServerType.jellyfin,
+    serverName: (j['serverName'] as String?) ?? '',
+  );
 
   final String serverUrl;
   final String userId;
@@ -443,13 +485,38 @@ class JellyfinApiService {
     return {'Authorization': value, 'X-Emby-Authorization': value};
   }
 
+  // Asks the server who it is. Both Jellyfin and Emby answer this without
+  // signing in; Emby installs are often served under an /emby path prefix,
+  // so try that too. Returns the working base URL, type and name.
+  Future<({String baseUrl, MediaServerType type, String name})?> detectServer(String serverUrl) async {
+    final base = _normalizeUrl(serverUrl.trim().startsWith('http') ? serverUrl : 'http://${serverUrl.trim()}');
+    for (final candidate in [base, if (!base.toLowerCase().endsWith('/emby')) '$base/emby']) {
+      try {
+        final response = await _client
+            .get(Uri.parse('$candidate/System/Info/Public'))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body);
+        if (data is! Map<String, dynamic>) continue;
+        final product = (data['ProductName'] as String? ?? '').toLowerCase();
+        final type = product.contains('emby') ? MediaServerType.emby : MediaServerType.jellyfin;
+        return (baseUrl: candidate, type: type, name: (data['ServerName'] as String?) ?? '');
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
+
   Future<JellyfinSession> login({
     required String serverUrl,
     required String username,
     required String password,
+    MediaServerType? preferredType,
   }) async {
     try {
-      final cleanServerUrl = _normalizeUrl(serverUrl);
+      final detected = await detectServer(serverUrl);
+      final cleanServerUrl = detected?.baseUrl ?? _normalizeUrl(serverUrl.trim().startsWith('http') ? serverUrl : 'http://${serverUrl.trim()}');
       // The explicit interpolation keeps the endpoint construction readable.
       // ignore: unnecessary_brace_in_string_interps
       final requestUri = Uri.parse(
@@ -461,7 +528,8 @@ class JellyfinApiService {
         'Authorization': authorization,
         'X-Emby-Authorization': authorization,
       };
-      final body = jsonEncode({'Username': username.trim(), 'Pw': password});
+      // Emby versions differ on the password field name; send both.
+      final body = jsonEncode({'Username': username.trim(), 'Pw': password, 'Password': password});
       final request = http.Request('POST', requestUri)
         ..headers.addAll(headers)
         ..bodyBytes = utf8.encode(body);
@@ -481,6 +549,8 @@ class JellyfinApiService {
         token: data['AccessToken'] as String,
         username: user['Name'] as String,
         isAdministrator: policy?['IsAdministrator'] == true,
+        serverType: detected?.type ?? preferredType ?? MediaServerType.jellyfin,
+        serverName: detected?.name ?? '',
       );
     } catch (e) {
       print('login error: $e');
@@ -1372,11 +1442,58 @@ class JellyfinApiService {
   Future<List<MediaSegment>> getSkipSegments(
     String serverUrl,
     String token,
-    String itemId,
-  ) async {
+    String itemId, {
+    String? userId,
+  }) async {
     final standard = await getMediaSegments(serverUrl, token, itemId);
     if (standard.isNotEmpty) return standard;
-    return _getIntroSkipperSegments(serverUrl, token, itemId);
+    final introSkipper = await _getIntroSkipperSegments(serverUrl, token, itemId);
+    if (introSkipper.isNotEmpty || userId == null) return introSkipper;
+    return _getChapterMarkerSegments(serverUrl, token, itemId, userId);
+  }
+
+  // Emby marks intros and credits as special chapters (MarkerType
+  // IntroStart / IntroEnd / CreditsStart) rather than media segments.
+  Future<List<MediaSegment>> _getChapterMarkerSegments(
+    String serverUrl,
+    String token,
+    String itemId,
+    String userId,
+  ) async {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    try {
+      final response = await _client.get(
+        Uri.parse('$cleanUrl/Users/$userId/Items/$itemId').replace(queryParameters: {'Fields': 'Chapters,RunTimeTicks'}),
+        headers: authHeaders(token),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) return const [];
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) return const [];
+      final chapters = (data['Chapters'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>();
+      Duration? introStart;
+      Duration? introEnd;
+      Duration? creditsStart;
+      for (final c in chapters) {
+        final at = ticksToDuration(c['StartPositionTicks']);
+        switch (c['MarkerType']) {
+          case 'IntroStart':
+            introStart = at;
+          case 'IntroEnd':
+            introEnd = at;
+          case 'CreditsStart':
+            creditsStart = at;
+        }
+      }
+      final runtime = ticksToDuration(data['RunTimeTicks']);
+      return [
+        if (introStart != null && introEnd != null && introEnd - introStart >= const Duration(seconds: 2))
+          MediaSegment(kind: MediaSegmentKind.intro, start: introStart, end: introEnd),
+        if (creditsStart != null && runtime > creditsStart)
+          MediaSegment(kind: MediaSegmentKind.outro, start: creditsStart, end: runtime),
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   // Intro Skipper's own API: /Episode/{id}/IntroSkipperSegments returns a map

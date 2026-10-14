@@ -212,7 +212,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!widget.isAudioOnly) {
       // Fire-and-forget: markers arriving a moment after playback starts is
       // fine, and a server without them just never shows a Skip button.
-      _api.getSkipSegments(widget.serverUrl, widget.token, widget.itemId).then((segments) {
+      _api.getSkipSegments(widget.serverUrl, widget.token, widget.itemId, userId: widget.userId).then((segments) {
         if (mounted) setState(() => _segments = segments);
       });
     }

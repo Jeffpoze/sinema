@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'arr_service.dart';
 import 'main.dart';
 import 'services/jellyfin_api_service.dart';
+import 'servers_screen.dart';
+import 'services/server_store.dart';
 import 'settings_controller.dart';
 import 'watch_history_screen.dart';
 
@@ -18,6 +19,7 @@ class SettingsScreen extends StatelessWidget {
         body: ListView(
           children: [
             _SettingsRow(title: 'Account', subtitle: session.username, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AccountScreen(session: session, settings: settings)))),
+            _SettingsRow(title: 'Servers', subtitle: '${session.serverType.label}', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ServersScreen(settings: settings)))),
             _SettingsRow(title: 'Watch History', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WatchHistoryScreen(session: session, settings: settings)))),
             _SettingsRow(title: 'Appearance', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AppearanceScreen(settings: settings)))),
             _SettingsRow(title: 'Playback', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlaybackScreen(settings: settings)))),
@@ -59,13 +61,12 @@ class AccountScreen extends StatelessWidget {
   final JellyfinSession session;
   final SettingsController settings;
 
+  // Forgets this server; the app moves to another saved server, Live TV
+  // only, or the welcome screen.
   Future<void> _signOut(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('serverUrl');
-    await prefs.remove('userId');
-    await prefs.remove('accessToken');
+    await ServerStore.instance.remove(session.accountId);
     if (!context.mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => AuthenticationScreen(settings: settings)), (route) => false);
+    goHome(context, settings);
   }
 
   @override
@@ -75,6 +76,7 @@ class AccountScreen extends StatelessWidget {
           children: [
             _InfoRow(label: 'Username', value: session.username),
             _InfoRow(label: 'Server', value: session.serverUrl),
+            _InfoRow(label: 'Type', value: session.serverType.label),
             const SizedBox(height: 24),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),

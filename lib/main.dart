@@ -3,13 +3,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'calendar_screen.dart';
 import 'detail_screen.dart';
 import 'livetv/live_tv_screen.dart';
 import 'player_screen.dart';
+import 'servers_screen.dart';
 import 'services/jellyfin_api_service.dart';
+import 'services/server_store.dart';
 import 'settings_controller.dart';
 import 'networks_screen.dart';
 import 'search_screen.dart';
@@ -20,34 +21,32 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = SettingsController();
   await settings.load();
-  final savedSession = await _loadSavedSession();
-  runApp(SinemaApp(settings: settings, initialSession: savedSession));
+  await ServerStore.instance.load();
+  runApp(SinemaApp(settings: settings));
 }
 
-Future<JellyfinSession?> _loadSavedSession() async {
-  final prefs = await SharedPreferences.getInstance();
-  final serverUrl = prefs.getString('serverUrl');
-  final userId = prefs.getString('userId');
-  final token = prefs.getString('accessToken');
-  final username = prefs.getString('username');
-  if (serverUrl == null || userId == null || token == null || username == null)
-    return null;
-  return JellyfinSession(
-    serverUrl: serverUrl,
-    userId: userId,
-    token: token,
-    username: username,
+// The screen the app should be showing for the current server / Live TV
+// choice. Used at launch and whenever the user switches servers.
+Widget homeFor(SettingsController settings) {
+  final store = ServerStore.instance;
+  return switch (store.startupMode) {
+    StartupMode.server => HomePage(session: store.active!, settings: settings),
+    StartupMode.liveTvOnly => LiveTvScreen(settings: settings, standalone: true),
+    StartupMode.welcome => WelcomeScreen(settings: settings),
+  };
+}
+
+// Replaces the whole navigation stack with the right home screen.
+void goHome(BuildContext context, SettingsController settings) {
+  Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+    MaterialPageRoute(builder: (_) => homeFor(settings)),
+    (route) => false,
   );
 }
 
 class SinemaApp extends StatelessWidget {
-  const SinemaApp({
-    super.key,
-    required this.settings,
-    this.initialSession,
-  });
+  const SinemaApp({super.key, required this.settings});
   final SettingsController settings;
-  final JellyfinSession? initialSession;
 
   @override
   Widget build(BuildContext context) {
@@ -103,13 +102,90 @@ class SinemaApp extends StatelessWidget {
             ),
           ),
         ),
-        home: initialSession != null
-            ? HomePage(session: initialSession!, settings: settings)
-            : AuthenticationScreen(settings: settings),
+        home: homeFor(settings),
       );
       },
     );
   }
+}
+
+// First launch: connect a media server, or skip straight to Live TV.
+class WelcomeScreen extends StatelessWidget {
+  const WelcomeScreen({super.key, required this.settings});
+  final SettingsController settings;
+
+  Widget _choice(BuildContext context, {required IconData icon, required String title, required String subtitle, required VoidCallback onTap, bool primary = false}) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Material(
+      color: primary ? accent.withValues(alpha: .16) : const Color(0xFF16181C),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: primary ? accent.withValues(alpha: .6) : Colors.white10)),
+          child: Row(
+            children: [
+              Icon(icon, size: 30, color: primary ? accent : Colors.white70),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text(subtitle, style: const TextStyle(color: Color(0xFFA5A7AC), height: 1.3)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFFA5A7AC)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.all(32),
+          children: [
+            Image.asset('assets/images/logo_mark.png', width: 88, height: 88),
+            const SizedBox(height: 24),
+            Text('Welcome to Sinema.', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('How do you want to start? You can add the other any time.', style: TextStyle(color: Color(0xFFA5A7AC))),
+            const SizedBox(height: 32),
+            _choice(
+              context,
+              icon: Icons.dns_outlined,
+              title: 'Connect a media server',
+              subtitle: 'Jellyfin or Emby. Live TV is included too.',
+              primary: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AuthenticationScreen(settings: settings))),
+            ),
+            const SizedBox(height: 14),
+            _choice(
+              context,
+              icon: Icons.live_tv_rounded,
+              title: 'Live TV only',
+              subtitle: 'Use your IPTV playlist (M3U or Xtream Codes) without a media server.',
+              onTap: () async {
+                await ServerStore.instance.useLiveTvOnly();
+                if (context.mounted) goHome(context, settings);
+              },
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class AuthenticationScreen extends StatefulWidget {
@@ -128,6 +204,8 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
   bool _rememberMe = true;
   bool _obscurePassword = true;
   String? _error;
+  // Only a hint: the server's own type is detected on sign-in.
+  MediaServerType _serverType = MediaServerType.jellyfin;
 
   Future<void> _signIn() async {
     setState(() {
@@ -139,25 +217,11 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
         serverUrl: _serverController.text,
         username: _usernameController.text,
         password: _passwordController.text,
+        preferredType: _serverType,
       );
-      final prefs = await SharedPreferences.getInstance();
-      if (_rememberMe) {
-        await prefs.setString('serverUrl', session.serverUrl);
-        await prefs.setString('userId', session.userId);
-        await prefs.setString('accessToken', session.token);
-        await prefs.setString('username', session.username);
-      } else {
-        await prefs.remove('serverUrl');
-        await prefs.remove('userId');
-        await prefs.remove('accessToken');
-        await prefs.remove('username');
-      }
+      await ServerStore.instance.addAndActivate(session, remember: _rememberMe);
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => HomePage(session: session, settings: widget.settings),
-        ),
-      );
+      goHome(context, widget.settings);
     } catch (_) {
       if (mounted)
         setState(
@@ -171,6 +235,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+    appBar: Navigator.of(context).canPop() ? AppBar() : null,
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 440),
@@ -188,16 +253,26 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Connect your Jellyfin server to begin.',
+                'Connect your Jellyfin or Emby server.',
                 style: TextStyle(color: Color(0xFFA5A7AC)),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              SegmentedButton<MediaServerType>(
+                segments: const [
+                  ButtonSegment(value: MediaServerType.jellyfin, label: Text('Jellyfin')),
+                  ButtonSegment(value: MediaServerType.emby, label: Text('Emby')),
+                ],
+                selected: {_serverType},
+                onSelectionChanged: (s) => setState(() => _serverType = s.first),
+              ),
+              const SizedBox(height: 20),
               TextField(
                 controller: _serverController,
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'Jellyfin Server URL',
-                  hintText: 'https://jellyfin.example.com',
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: '${_serverType.label} Server URL',
+                  hintText: _serverType == MediaServerType.emby ? 'http://192.168.1.10:8096' : 'https://jellyfin.example.com',
                 ),
               ),
               const SizedBox(height: 14),
@@ -523,7 +598,12 @@ class _HomePageState extends State<HomePage> {
 
   void _openLiveTv() {
     Navigator.of(context).pop();
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveTvScreen()));
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => LiveTvScreen(settings: widget.settings)));
+  }
+
+  void _openServers() {
+    Navigator.of(context).pop();
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => ServersScreen(settings: widget.settings)));
   }
 
   void _openNetworks() {
@@ -591,6 +671,8 @@ class _HomePageState extends State<HomePage> {
         onCalendar: _openCalendar,
         onNetworks: _openNetworks,
         onLiveTv: _openLiveTv,
+        session: widget.session,
+        onSwitchServer: _openServers,
       ),
       body: _selectedCategoryId == null
           ? ListView(
@@ -650,7 +732,11 @@ class _CategoryDrawer extends StatelessWidget {
     required this.onCalendar,
     required this.onNetworks,
     required this.onLiveTv,
+    required this.session,
+    required this.onSwitchServer,
   });
+  final JellyfinSession session;
+  final VoidCallback onSwitchServer;
   final List<dynamic> libraryViews;
   final String? selectedId;
   final void Function(String?) onSelect;
@@ -661,11 +747,25 @@ class _CategoryDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Drawer(
-    backgroundColor: const Color(0xFF0D0E11),
     child: SafeArea(
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 12),
         children: [
+          // Current server, with a one-tap way to switch.
+          ListTile(
+            contentPadding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+            leading: CircleAvatar(
+              backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: .2),
+              child: Icon(Icons.dns_outlined, color: Theme.of(context).colorScheme.primary),
+            ),
+            title: Text(session.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text('${session.serverType.label} · ${session.username}', style: const TextStyle(color: Color(0xFFA5A7AC))),
+            trailing: TextButton(onPressed: onSwitchServer, child: const Text('Switch')),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Divider(color: Color(0xFF1B1D22)),
+          ),
           const Padding(
             padding: EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Text(

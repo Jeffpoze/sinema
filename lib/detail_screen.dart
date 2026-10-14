@@ -5,6 +5,7 @@ import 'package:better_native_video_player/better_native_video_player.dart' show
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'download_manager.dart';
 import 'manage_screen.dart';
@@ -478,6 +479,40 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  List<String> get _remoteTrailerUrls => ((_item?['RemoteTrailers'] as List<dynamic>?) ?? const [])
+      .whereType<Map<String, dynamic>>()
+      .map((t) => _asString(t['Url']))
+      .whereType<String>()
+      .where((url) => url.startsWith('http'))
+      .toList();
+
+  bool get _hasTrailer => (_asInt(_item?['LocalTrailerCount']) ?? 0) > 0 || _remoteTrailerUrls.isNotEmpty;
+
+  // Prefers a trailer file sitting next to the movie on the server (plays in
+  // Sinema's own player); otherwise hands the metadata's YouTube trailer to
+  // the YouTube app or browser.
+  Future<void> _playTrailer() async {
+    final name = _asString(_item?['Name']) ?? 'Trailer';
+    if ((_asInt(_item?['LocalTrailerCount']) ?? 0) > 0) {
+      final trailers = await _api.getLocalTrailers(widget.serverUrl, widget.userId, widget.token, widget.itemId);
+      final trailerId = _asString(trailers.whereType<Map<String, dynamic>>().firstOrNull?['Id']);
+      if (trailerId != null) {
+        await _play(trailerId, name, subtitle: 'Trailer');
+        return;
+      }
+    }
+    final urls = _remoteTrailerUrls;
+    if (urls.isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No trailer found for this title.')));
+      return;
+    }
+    await ThemeMusicPlayer.instance.stopFor(widget.itemId);
+    final opened = await launchUrl(Uri.parse(urls.first), mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Couldn\'t open the trailer.')));
+    }
+  }
+
   void _showUnavailable(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$feature is coming soon.')),
@@ -773,6 +808,10 @@ class _DetailScreenState extends State<DetailScreen> {
                       if (_hasResumablePlay) ...[
                         const SizedBox(width: 12),
                         IconButton.filled(onPressed: () => _playMain(fromBeginning: true), icon: const Icon(Icons.replay), style: IconButton.styleFrom(backgroundColor: Colors.white24, foregroundColor: Colors.white, fixedSize: const Size(52, 52)), tooltip: 'Play from beginning'),
+                      ],
+                      if (_hasTrailer) ...[
+                        const SizedBox(width: 12),
+                        IconButton.filled(onPressed: _playTrailer, icon: const Icon(Icons.theaters_outlined), style: IconButton.styleFrom(backgroundColor: Colors.white24, foregroundColor: Colors.white, fixedSize: const Size(52, 52)), tooltip: 'Play trailer'),
                       ],
                     ]),
                     const SizedBox(height: 16),

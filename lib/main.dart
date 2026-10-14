@@ -883,12 +883,12 @@ class _HeroPlaceholder extends StatelessWidget {
           Icon(Icons.play_circle_outline, size: 56, color: Colors.white70),
           SizedBox(height: 12),
           Text(
-            'Your featured story',
+            'Nothing featured yet',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
           ),
           SizedBox(height: 6),
           Text(
-            'Trailers will play here',
+            'New and featured titles appear here',
             style: TextStyle(color: Colors.white54),
           ),
         ],

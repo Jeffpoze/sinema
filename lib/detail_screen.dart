@@ -319,7 +319,7 @@ class _DetailScreenState extends State<DetailScreen> {
   // independently negotiating its own Jellyfin session. Guard against it.
   bool _isOpeningPlayer = false;
 
-  Future<void> _play(String itemId, String title, {String? subtitle, Duration startPosition = Duration.zero, VoidCallback? onNext, bool replace = false, bool isAudioOnly = false}) async {
+  Future<void> _play(String itemId, String title, {String? subtitle, Duration startPosition = Duration.zero, VoidCallback? onNext, String? nextTitle, String? nextSubtitle, String? nextImageUrl, bool replace = false, bool isAudioOnly = false}) async {
     if (_isOpeningPlayer) return;
     _isOpeningPlayer = true;
     // Fade the theme out before the video's own audio starts.
@@ -330,7 +330,7 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     if (!mounted) return;
     final route = MaterialPageRoute<void>(
-      builder: (_) => PlayerScreen(title: title, subtitle: subtitle, serverUrl: widget.serverUrl, userId: widget.userId, token: widget.token, itemId: itemId, startPosition: startPosition, onNext: onNext, isAudioOnly: isAudioOnly, settings: widget.settings, localFilePath: localFilePath),
+      builder: (_) => PlayerScreen(title: title, subtitle: subtitle, serverUrl: widget.serverUrl, userId: widget.userId, token: widget.token, itemId: itemId, startPosition: startPosition, onNext: onNext, nextTitle: nextTitle, nextSubtitle: nextSubtitle, nextImageUrl: nextImageUrl, isAudioOnly: isAudioOnly, settings: widget.settings, localFilePath: localFilePath),
     );
     final future = replace ? Navigator.of(context).pushReplacement(route) : Navigator.of(context).push(route);
     future.then((_) {
@@ -357,7 +357,21 @@ class _DetailScreenState extends State<DetailScreen> {
     final episodes = _seasonEpisodes.whereType<Map<String, dynamic>>().toList();
     final index = episodes.indexWhere((e) => e['Id'] == itemId);
     final next = index >= 0 && index + 1 < episodes.length ? episodes[index + 1] : null;
-    _play(itemId, seriesName, subtitle: subtitle, startPosition: fromBeginning ? Duration.zero : ticksToDuration(ticks), replace: replace, onNext: next == null ? null : () => _playEpisode(next, replace: true));
+    final nextId = _asString(next?['Id']);
+    final nextTag = _asString((next?['ImageTags'] as Map<String, dynamic>?)?['Primary']);
+    final nextSeason = next?['ParentIndexNumber'];
+    final nextNumber = next?['IndexNumber'];
+    _play(
+      itemId,
+      seriesName,
+      subtitle: subtitle,
+      startPosition: fromBeginning ? Duration.zero : ticksToDuration(ticks),
+      replace: replace,
+      onNext: next == null ? null : () => _playEpisode(next, replace: true),
+      nextTitle: _asString(next?['Name']),
+      nextSubtitle: nextSeason != null && nextNumber != null ? 'Season $nextSeason, Episode $nextNumber' : null,
+      nextImageUrl: nextId == null ? null : JellyfinApiService.getImageUrl(widget.serverUrl, nextId, imageTag: nextTag, maxWidth: 480),
+    );
   }
 
   void _playTrack(Map<String, dynamic> track, {bool fromBeginning = false}) {

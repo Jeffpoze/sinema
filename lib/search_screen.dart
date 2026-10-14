@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import 'detail_screen.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'widgets/sinema_image.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, required this.session, required this.settings});
@@ -219,7 +219,7 @@ class _SearchResultTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(6),
               child: imageUrl == null
                   ? const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.movie_outlined, color: Colors.white24))
-                  : CachedNetworkImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 400, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
+                  : SinemaImage(imageUrl: imageUrl, httpHeaders: JellyfinApiService.authHeaders(token), fit: BoxFit.cover, memCacheWidth: 400, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF17191D))),
             ),
           ),
           const SizedBox(height: 8),

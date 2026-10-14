@@ -2,7 +2,6 @@
 
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,6 +13,7 @@ import 'settings_controller.dart';
 import 'networks_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'widgets/sinema_image.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1052,7 +1052,7 @@ class _HeroCard extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             if (backdropUrl != null)
-              CachedNetworkImage(
+              SinemaImage(
                 imageUrl: backdropUrl,
                 httpHeaders: JellyfinApiService.authHeaders(token),
                 fit: BoxFit.cover,
@@ -1260,7 +1260,7 @@ class MediaPoster extends StatelessWidget {
       );
       content = ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: CachedNetworkImage(
+        child: SinemaImage(
           imageUrl: imageUrl,
           httpHeaders: JellyfinApiService.authHeaders(token),
           fit: BoxFit.cover,

@@ -1,9 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import 'arr_service.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'widgets/sinema_image.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key, required this.serverUrl, required this.userId, required this.token, required this.settings});
@@ -268,7 +268,7 @@ class _UpcomingRow extends StatelessWidget {
               height: 80,
               child: entry.posterUrl == null
                   ? const ColoredBox(color: Color(0xFF17191D), child: Icon(Icons.movie_outlined, color: Colors.white24))
-                  : CachedNetworkImage(
+                  : SinemaImage(
                       imageUrl: entry.posterUrl!,
                       httpHeaders: entry.posterNeedsAuth ? JellyfinApiService.authHeaders(token) : null,
                       fit: BoxFit.cover,

@@ -1,10 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import 'main.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
 import 'tmdb_service.dart';
+import 'widgets/sinema_image.dart';
 
 // Jellyfin has no distinct "Network" concept — the distributing network
 // (Netflix, Apple TV+, …) and a production studio both just land in the
@@ -201,7 +201,7 @@ class _NetworkTileState extends State<_NetworkTile> {
     // brand color behind it instead of going flat white everywhere.
     final hasLogoImage = imageUrl != null || _tmdbLogoUrl != null;
 
-    Widget imageFor(String url, {bool useAuthHeaders = false}) => CachedNetworkImage(
+    Widget imageFor(String url, {bool useAuthHeaders = false}) => SinemaImage(
           imageUrl: url,
           httpHeaders: useAuthHeaders ? JellyfinApiService.authHeaders(widget.session.token) : null,
           fit: BoxFit.contain,

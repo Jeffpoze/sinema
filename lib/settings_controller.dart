@@ -128,6 +128,9 @@ class SettingsController extends ChangeNotifier {
   static const _sonarrApiKeyKey = 'settings.sonarrApiKey';
   static const _radarrUrlKey = 'settings.radarrUrl';
   static const _radarrApiKeyKey = 'settings.radarrApiKey';
+  static const _themeMusicKey = 'settings.themeMusic';
+  static const _autoPlayNextKey = 'settings.autoPlayNext';
+  static const _autoSkipIntroKey = 'settings.autoSkipIntro';
 
   Color _accentColor = accentColorOptions.first.color;
   Color get accentColor => _accentColor;
@@ -137,6 +140,18 @@ class SettingsController extends ChangeNotifier {
 
   String _defaultQuality = 'original';
   String get defaultQuality => _defaultQuality;
+
+  // Plays an item's theme song quietly on its detail page, like Plex.
+  bool _themeMusic = true;
+  bool get themeMusic => _themeMusic;
+
+  // Counts down and starts the next episode during the credits.
+  bool _autoPlayNext = true;
+  bool get autoPlayNext => _autoPlayNext;
+
+  // Jumps past intros/recaps without needing a tap on Skip.
+  bool _autoSkipIntro = false;
+  bool get autoSkipIntro => _autoSkipIntro;
 
   // Free key from omdbapi.com — used to fetch a real IMDb rating (and a
   // Rotten Tomatoes critic score, where OMDB has one) client-side, since
@@ -179,6 +194,9 @@ class SettingsController extends ChangeNotifier {
     if (storedSkip != null && skipIntervalOptions.contains(storedSkip)) _skipSeconds = storedSkip;
     final storedQuality = prefs.getString(_defaultQualityKey);
     if (storedQuality != null && defaultQualityOptions.contains(storedQuality)) _defaultQuality = storedQuality;
+    _themeMusic = prefs.getBool(_themeMusicKey) ?? true;
+    _autoPlayNext = prefs.getBool(_autoPlayNextKey) ?? true;
+    _autoSkipIntro = prefs.getBool(_autoSkipIntroKey) ?? false;
     _omdbApiKey = prefs.getString(_omdbApiKeyKey) ?? '';
     _tmdbApiKey = prefs.getString(_tmdbApiKeyKey) ?? '';
     _sonarrUrl = prefs.getString(_sonarrUrlKey) ?? '';
@@ -214,6 +232,27 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_defaultQualityKey, quality);
+  }
+
+  Future<void> setThemeMusic(bool value) async {
+    _themeMusic = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_themeMusicKey, value);
+  }
+
+  Future<void> setAutoPlayNext(bool value) async {
+    _autoPlayNext = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoPlayNextKey, value);
+  }
+
+  Future<void> setAutoSkipIntro(bool value) async {
+    _autoSkipIntro = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoSkipIntroKey, value);
   }
 
   Future<void> setOmdbApiKey(String key) async {

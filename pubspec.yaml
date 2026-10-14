@@ -40,6 +40,8 @@ dependencies:
   cached_network_image: ^3.4.1
   collection: ^1.19.1
   path_provider: ^2.1.6
+  just_audio: ^0.10.4
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

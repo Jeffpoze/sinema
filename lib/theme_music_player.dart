@@ -25,6 +25,8 @@ class ThemeMusicPlayer {
   // Background level: present but well under dialogue/UI sounds.
   static const _targetVolume = 0.35;
 
+  // Held so the listener stays registered for the app's lifetime.
+  // ignore: unused_field
   late final AppLifecycleListener _lifecycle;
   final _api = JellyfinApiService();
   AudioPlayer? _player;

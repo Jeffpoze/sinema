@@ -11,6 +11,7 @@ import 'manage_screen.dart';
 import 'player_screen.dart';
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'theme_music_player.dart';
 import 'widgets/sinema_image.dart';
 
 // `dynamic as Type?` throws if the value is non-null but the wrong type —
@@ -59,6 +60,22 @@ class _DetailScreenState extends State<DetailScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    ThemeMusicPlayer.instance.stopFor(widget.itemId);
+    super.dispose();
+  }
+
+  // Movies, shows and collections get their theme song on the detail page,
+  // like Plex. Episodes and music are left alone: an episode page would
+  // replay the show's theme every time, and an album already is music.
+  void _startThemeMusic() {
+    final type = _item?['Type'];
+    if (!widget.settings.themeMusic) return;
+    if (type != 'Movie' && type != 'Series' && type != 'BoxSet') return;
+    ThemeMusicPlayer.instance.playFor(serverUrl: widget.serverUrl, userId: widget.userId, token: widget.token, itemId: widget.itemId);
+  }
+
   Future<void> _load() async {
     try {
       final item = await _api.getItemDetail(widget.serverUrl, widget.userId, widget.token, widget.itemId);
@@ -67,6 +84,7 @@ class _DetailScreenState extends State<DetailScreen> {
         _item = item;
         _isLoading = false;
       });
+      _startThemeMusic();
       if (item['Type'] == 'Series') {
         _loadSeriesExtras();
       } else if (item['IsFolder'] == true) {
@@ -304,6 +322,8 @@ class _DetailScreenState extends State<DetailScreen> {
   Future<void> _play(String itemId, String title, {String? subtitle, Duration startPosition = Duration.zero, VoidCallback? onNext, bool replace = false, bool isAudioOnly = false}) async {
     if (_isOpeningPlayer) return;
     _isOpeningPlayer = true;
+    // Fade the theme out before the video's own audio starts.
+    await ThemeMusicPlayer.instance.stopFor(widget.itemId);
     String? localFilePath;
     if (itemId == widget.itemId && _isDownloaded) {
       localFilePath = await DownloadManager.instance.localPathFor(itemId);
@@ -314,7 +334,14 @@ class _DetailScreenState extends State<DetailScreen> {
     );
     final future = replace ? Navigator.of(context).pushReplacement(route) : Navigator.of(context).push(route);
     future.then((_) {
-      if (mounted) _isOpeningPlayer = false;
+      if (!mounted) return;
+      _isOpeningPlayer = false;
+      // A replaced player (auto-advancing to the next episode) completes
+      // this future too, while the next episode is still on screen — only
+      // bring the theme back once this page is actually visible again.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && (ModalRoute.of(context)?.isCurrent ?? false)) _startThemeMusic();
+      });
     });
   }
 

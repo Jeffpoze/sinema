@@ -212,6 +212,25 @@ class PlaybackScreen extends StatelessWidget {
                     if (value != null) settings.setDefaultQuality(value);
                   },
                 ),
+              const Divider(color: Color(0xFF1B1D22)),
+              SwitchListTile(
+                value: settings.autoPlayNext,
+                onChanged: settings.setAutoPlayNext,
+                title: const Text('Auto-Play Next Episode'),
+                subtitle: const Text('Counts down during the credits, then starts the next episode.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              ),
+              SwitchListTile(
+                value: settings.autoSkipIntro,
+                onChanged: settings.setAutoSkipIntro,
+                title: const Text('Skip Intros Automatically'),
+                subtitle: const Text('Needs intro markers on your server, e.g. from the Intro Skipper plugin.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              ),
+              SwitchListTile(
+                value: settings.themeMusic,
+                onChanged: settings.setThemeMusic,
+                title: const Text('Theme Music'),
+                subtitle: const Text('Plays a title\'s theme song on its detail page.', style: TextStyle(color: Color(0xFFA5A7AC))),
+              ),
             ],
           ),
         ),

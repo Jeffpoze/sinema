@@ -921,7 +921,7 @@ class JellyfinApiService {
     final cleanUrl = _normalizeUrl(serverUrl);
     final uri = Uri.parse('$cleanUrl/Users/$userId/Items/$itemId').replace(
       queryParameters: {
-        'Fields': 'Overview,Genres,Studios,People,PrimaryImageTag,ImageTags,BackdropImageTags,CommunityRating,CriticRating,OfficialRating,PremiereDate,ProductionYear,EndDate,Status,RunTimeTicks,ProviderIds',
+        'Fields': 'Overview,Genres,Studios,People,PrimaryImageTag,ImageTags,BackdropImageTags,CommunityRating,CriticRating,OfficialRating,PremiereDate,ProductionYear,EndDate,Status,RunTimeTicks,ProviderIds,RemoteTrailers,LocalTrailerCount',
       },
     );
     final response = await _client.get(uri, headers: authHeaders(token));
@@ -1319,8 +1319,125 @@ class JellyfinApiService {
     return const [];
   }
 
+  // Intro / recap / preview / credits markers. Jellyfin 10.10+ exposes these
+  // as "media segments", filled in by a segment provider plugin (Intro
+  // Skipper, chapter-based providers, etc). Servers without a provider, or
+  // older servers without the endpoint at all, just return nothing — the
+  // player then simply never shows a Skip button.
+  Future<List<MediaSegment>> getMediaSegments(
+    String serverUrl,
+    String token,
+    String itemId,
+  ) async {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    try {
+      final response = await _client.get(
+        Uri.parse('$cleanUrl/MediaSegments/$itemId'),
+        headers: authHeaders(token),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const [];
+      }
+      final data = jsonDecode(response.body);
+      final items = data is Map<String, dynamic> ? data['Items'] : data;
+      if (items is! List<dynamic>) return const [];
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map(MediaSegment.fromJson)
+          .whereType<MediaSegment>()
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // Theme songs live alongside an item's files (theme.mp3 / theme-music
+  // folders). For a series the server resolves its own theme; for a
+  // collection, `InheritFromParent` falls back to nothing, which is fine.
+  Future<List<dynamic>> getThemeSongs(
+    String serverUrl,
+    String userId,
+    String token,
+    String itemId,
+  ) async {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    try {
+      final response = await _client.get(
+        Uri.parse('$cleanUrl/Items/$itemId/ThemeSongs').replace(
+          queryParameters: {'userId': userId, 'inheritFromParent': 'true'},
+        ),
+        headers: authHeaders(token),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const [];
+      }
+      final data = jsonDecode(response.body);
+      if (data is Map<String, dynamic> && data['Items'] is List<dynamic>) {
+        return data['Items'] as List<dynamic>;
+      }
+      return const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // Trailer files that sit next to the movie on disk (movie-trailer.mkv,
+  // a trailers/ folder). These play through the normal player like any
+  // other video item. Remote (YouTube) trailers come from the item's own
+  // RemoteTrailers field instead and open externally.
+  Future<List<dynamic>> getLocalTrailers(
+    String serverUrl,
+    String userId,
+    String token,
+    String itemId,
+  ) async {
+    final cleanUrl = _normalizeUrl(serverUrl);
+    try {
+      final response = await _client.get(
+        Uri.parse('$cleanUrl/Users/$userId/Items/$itemId/LocalTrailers'),
+        headers: authHeaders(token),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const [];
+      }
+      final data = jsonDecode(response.body);
+      return data is List<dynamic> ? data : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   String _normalizeUrl(String value) {
     final trimmed = value.trim();
     return trimmed.replaceFirst(RegExp(r'/+$'), '');
+  }
+}
+
+enum MediaSegmentKind { intro, recap, preview, outro, commercial }
+
+class MediaSegment {
+  const MediaSegment({required this.kind, required this.start, required this.end});
+
+  final MediaSegmentKind kind;
+  final Duration start;
+  final Duration end;
+
+  bool contains(Duration position) => position >= start && position < end;
+
+  static MediaSegment? fromJson(Map<String, dynamic> json) {
+    final kind = switch ((json['Type'] as String?)?.toLowerCase()) {
+      'intro' => MediaSegmentKind.intro,
+      'recap' => MediaSegmentKind.recap,
+      'preview' => MediaSegmentKind.preview,
+      'outro' => MediaSegmentKind.outro,
+      'commercial' => MediaSegmentKind.commercial,
+      _ => null,
+    };
+    if (kind == null) return null;
+    final start = ticksToDuration(json['StartTicks']);
+    final end = ticksToDuration(json['EndTicks']);
+    // Ignore zero-length / inverted markers rather than flashing a button.
+    if (end - start < const Duration(seconds: 2)) return null;
+    return MediaSegment(kind: kind, start: start, end: end);
   }
 }

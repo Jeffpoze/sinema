@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../servers_screen.dart';
+import '../settings_controller.dart';
+import '../settings_screen.dart';
 import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
 import 'iptv_player_screen.dart';
@@ -24,7 +27,11 @@ List<String> _groupsOf(List<IptvItem> items) => _groupsMemo[items] ??= () {
 // Live TV, TiviMate-style: channels with now/next, a guide grid, and the
 // provider's movies and series — all from M3U / Xtream playlists.
 class LiveTvScreen extends StatefulWidget {
-  const LiveTvScreen({super.key});
+  const LiveTvScreen({super.key, required this.settings, this.standalone = false});
+  final SettingsController settings;
+  // True when Live TV is the app's home (no media server signed in): adds a
+  // menu for servers and appearance instead of a back button.
+  final bool standalone;
 
   @override
   State<LiveTvScreen> createState() => _LiveTvScreenState();
@@ -61,6 +68,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: _repo,
         builder: (context, _) => Scaffold(
+          drawer: widget.standalone ? _StandaloneDrawer(settings: widget.settings) : null,
           appBar: AppBar(
             title: _searching
                 ? TextField(
@@ -789,4 +797,57 @@ void _showMovie(BuildContext context, IptvItem movie) {
       ),
     ),
   );
+}
+
+class _StandaloneDrawer extends StatelessWidget {
+  const _StandaloneDrawer({required this.settings});
+  final SettingsController settings;
+
+  void _open(BuildContext context, Widget screen) {
+    Navigator.of(context).pop();
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+  }
+
+  @override
+  Widget build(BuildContext context) => Drawer(
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Text('SINEMA', style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 1.4, color: _muted)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.connected_tv_outlined),
+                title: const Text('Live TV'),
+                selected: true,
+                selectedTileColor: const Color(0xFF1B1D22),
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              ListTile(
+                leading: const Icon(Icons.dns_outlined),
+                title: const Text('Media Servers'),
+                subtitle: const Text('Connect Jellyfin or Emby', style: TextStyle(color: _muted)),
+                onTap: () => _open(context, ServersScreen(settings: settings)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.playlist_add),
+                title: const Text('Playlists'),
+                onTap: () => _open(context, const IptvSourcesScreen()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('Appearance'),
+                onTap: () => _open(context, AppearanceScreen(settings: settings)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('About'),
+                onTap: () => _open(context, const AboutScreen()),
+              ),
+            ],
+          ),
+        ),
+      );
 }

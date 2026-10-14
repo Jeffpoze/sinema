@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'services/jellyfin_api_service.dart';
 import 'settings_controller.dart';
+import 'widgets/sinema_image.dart';
 
 enum StreamQuality { original, high, medium, low }
 
@@ -42,6 +43,9 @@ class PlayerScreen extends StatefulWidget {
     this.startPosition = Duration.zero,
     this.subtitle,
     this.onNext,
+    this.nextTitle,
+    this.nextSubtitle,
+    this.nextImageUrl,
     this.isAudioOnly = false,
     required this.settings,
     this.localFilePath,
@@ -54,6 +58,10 @@ class PlayerScreen extends StatefulWidget {
   final String itemId;
   final Duration startPosition;
   final VoidCallback? onNext;
+  // What the Up Next card shows for the episode [onNext] will start.
+  final String? nextTitle;
+  final String? nextSubtitle;
+  final String? nextImageUrl;
   final bool isAudioOnly;
   final SettingsController settings;
   // When set, plays this local file directly instead of streaming — no
@@ -94,6 +102,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isPlaying = true;
   StreamSubscription<PlayerActivityState>? _playerStateSub;
 
+  // Intro / recap / credits markers from the server, and where we are in them.
+  List<MediaSegment> _segments = const [];
+  MediaSegment? _activeSegment;
+  final Set<MediaSegment> _autoSkipped = {};
+  Timer? _positionTimer;
+
+  // Up Next: a cancellable countdown during the credits before moving on.
+  static const _upNextCountdown = 10;
+  static const _creditsFallback = Duration(seconds: 30);
+  bool _upNextVisible = false;
+  bool _upNextCancelled = false;
+  bool _advanced = false;
+  int _upNextRemaining = _upNextCountdown;
+  Timer? _upNextTimer;
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +147,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _playerStateSub = _controller.playerStateStream.listen((state) {
       if (mounted) setState(() => _isPlaying = state.isPlaying);
     });
+    if (!widget.isAudioOnly) {
+      // Polled rather than subscribing to positionStream, which the progress
+      // bar already listens to.
+      _positionTimer = Timer.periodic(
+        const Duration(milliseconds: 500),
+        (_) => _handlePosition(_controller.currentPosition),
+      );
+    }
     if (!widget.isAudioOnly && widget.localFilePath == null) {
       // Jellyfin's transcode has its own idle "kill timer" that tears down
       // the ffmpeg process if it stops hearing from the client — server logs
@@ -167,6 +198,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
         if (mounted) setState(() => _jellyfinStreams = streams);
       } catch (_) {}
+    }
+    if (!widget.isAudioOnly) {
+      // Fire-and-forget: markers arriving a moment after playback starts is
+      // fine, and a server without them just never shows a Skip button.
+      _api.getMediaSegments(widget.serverUrl, widget.token, widget.itemId).then((segments) {
+        if (mounted) setState(() => _segments = segments);
+      });
     }
     _openStream(position: widget.startPosition);
   }
@@ -306,7 +344,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (mounted) setState(() => _error = nativeMessage);
         break;
       case PlayerActivityState.completed:
-        if (widget.onNext != null) widget.onNext!();
+        if (widget.settings.autoPlayNext && !_upNextCancelled) _playNext();
         break;
       default:
         break;
@@ -626,9 +664,121 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _controller.play();
   }
 
+  MediaSegment? get _outro {
+    for (final segment in _segments) {
+      if (segment.kind == MediaSegmentKind.outro) return segment;
+    }
+    return null;
+  }
+
+  // With no credits marker, treat the last 30s of anything over 5 minutes
+  // as the credits so Up Next still appears.
+  bool _isInCredits(Duration position) {
+    final outro = _outro;
+    if (outro != null) return position >= outro.start;
+    final duration = _controller.duration;
+    if (duration < const Duration(minutes: 5)) return false;
+    return duration - position <= _creditsFallback;
+  }
+
+  void _handlePosition(Duration position) {
+    if (!mounted || _castSession != null) return;
+    MediaSegment? active;
+    for (final segment in _segments) {
+      if (segment.contains(position)) {
+        active = segment;
+        break;
+      }
+    }
+    if (active != _activeSegment) setState(() => _activeSegment = active);
+
+    if (active != null &&
+        active.kind != MediaSegmentKind.outro &&
+        widget.settings.autoSkipIntro &&
+        _autoSkipped.add(active)) {
+      _controller.seekTo(active.end);
+      return;
+    }
+
+    final canAutoAdvance = widget.onNext != null && widget.settings.autoPlayNext && !_upNextCancelled && !_advanced;
+    if (!canAutoAdvance) return;
+    final inCredits = _isInCredits(position);
+    if (inCredits && !_upNextVisible) {
+      _showUpNext();
+    } else if (!inCredits && _upNextVisible) {
+      // Scrubbed back out of the credits: put the card away, but let it come
+      // back with a fresh countdown next time.
+      _upNextTimer?.cancel();
+      setState(() => _upNextVisible = false);
+    }
+  }
+
+  void _showUpNext() {
+    _upNextTimer?.cancel();
+    setState(() {
+      _upNextVisible = true;
+      _upNextRemaining = _upNextCountdown;
+    });
+    _upNextTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      // Hold the countdown while the viewer has paused.
+      if (!_isPlaying) return;
+      if (_upNextRemaining <= 1) {
+        timer.cancel();
+        _playNext();
+        return;
+      }
+      setState(() => _upNextRemaining--);
+    });
+  }
+
+  void _cancelUpNext() {
+    _upNextTimer?.cancel();
+    setState(() {
+      _upNextVisible = false;
+      _upNextCancelled = true;
+    });
+  }
+
+  void _playNext() {
+    final onNext = widget.onNext;
+    if (onNext == null || _advanced) return;
+    _advanced = true;
+    _upNextTimer?.cancel();
+    onNext();
+  }
+
+  void _skipActiveSegment() {
+    final segment = _activeSegment;
+    if (segment == null) return;
+    if (segment.kind == MediaSegmentKind.outro && widget.onNext != null) {
+      _playNext();
+      return;
+    }
+    _controller.seekTo(segment.end);
+  }
+
+  String? get _skipLabel {
+    final segment = _activeSegment;
+    if (segment == null) return null;
+    return switch (segment.kind) {
+      MediaSegmentKind.intro => 'Skip Intro',
+      MediaSegmentKind.recap => 'Skip Recap',
+      MediaSegmentKind.preview => 'Skip Preview',
+      MediaSegmentKind.commercial => 'Skip Ad',
+      // The Up Next card already covers this when it's showing.
+      MediaSegmentKind.outro => _upNextVisible ? null : (widget.onNext != null ? 'Next Episode' : 'Skip Credits'),
+    };
+  }
+
   @override
   void dispose() {
     _progressTimer?.cancel();
+    _upNextTimer?.cancel();
+    _positionTimer?.cancel();
     _playerStateSub?.cancel();
     _controller.removeActivityListener(_handleActivityEvent);
     _controller.removeAirPlayAvailabilityListener(_handleAirPlayAvailability);
@@ -681,7 +831,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
             subtitle: widget.subtitle,
             onStop: _disconnectCast,
           )
-        : NativeVideoPlayer(
+        : Stack(
+            fit: StackFit.expand,
+            children: [
+              NativeVideoPlayer(
             controller: _controller,
             overlayBuilder: (overlayContext, controller) => _locked
                 ? Positioned(
@@ -754,8 +907,157 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ],
                   ),
+              ),
+              // Kept outside the player's own overlay so they stay up while
+              // the regular controls auto-hide, like every streaming app.
+              if (!_locked && _skipLabel != null)
+                Positioned(
+                  right: 28,
+                  bottom: 120,
+                  child: SafeArea(
+                    child: _SkipButton(label: _skipLabel!, onPressed: _skipActiveSegment),
+                  ),
+                ),
+              if (!_locked && _upNextVisible)
+                Positioned(
+                  right: 28,
+                  bottom: 110,
+                  child: SafeArea(
+                    child: _UpNextCard(
+                      title: widget.nextTitle ?? 'Next Episode',
+                      subtitle: widget.nextSubtitle,
+                      imageUrl: widget.nextImageUrl,
+                      token: widget.token,
+                      secondsRemaining: _upNextRemaining,
+                      totalSeconds: _upNextCountdown,
+                      onPlayNow: _playNext,
+                      onCancel: _cancelUpNext,
+                    ),
+                  ),
+                ),
+            ],
           ),
   );
+}
+
+class _SkipButton extends StatelessWidget {
+  const _SkipButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    onPressed: onPressed,
+    icon: const Icon(Icons.skip_next_rounded, size: 22),
+    label: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+    style: OutlinedButton.styleFrom(
+      foregroundColor: Colors.white,
+      backgroundColor: Colors.black.withValues(alpha: .55),
+      side: const BorderSide(color: Colors.white70, width: 1.2),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ),
+  );
+}
+
+class _UpNextCard extends StatelessWidget {
+  const _UpNextCard({
+    required this.title,
+    required this.subtitle,
+    required this.imageUrl,
+    required this.token,
+    required this.secondsRemaining,
+    required this.totalSeconds,
+    required this.onPlayNow,
+    required this.onCancel,
+  });
+  final String title;
+  final String? subtitle;
+  final String? imageUrl;
+  final String token;
+  final int secondsRemaining;
+  final int totalSeconds;
+  final VoidCallback onPlayNow;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Container(
+      width: 340,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xE6101114),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: 120,
+              height: 68,
+              child: imageUrl == null
+                  ? const ColoredBox(color: Color(0xFF1B1D22), child: Icon(Icons.movie_outlined, color: Colors.white38))
+                  : SinemaImage(
+                      imageUrl: imageUrl!,
+                      httpHeaders: JellyfinApiService.authHeaders(token),
+                      fit: BoxFit.cover,
+                      memCacheWidth: 360,
+                      errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF1B1D22)),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('UP NEXT IN $secondsRemaining', style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.4)),
+                const SizedBox(height: 4),
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                if (subtitle != null)
+                  Text(subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFFA5A7AC))),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: onPlayNow,
+                      icon: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          value: 1 - (secondsRemaining - 1) / totalSeconds,
+                          strokeWidth: 2.2,
+                          color: Colors.black,
+                          backgroundColor: Colors.black26,
+                        ),
+                      ),
+                      label: const Text('Play Now'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: onCancel,
+                      style: TextButton.styleFrom(foregroundColor: Colors.white70, visualDensity: VisualDensity.compact),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PlayerSettingsSheet extends StatelessWidget {

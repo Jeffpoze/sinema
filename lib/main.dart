@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'calendar_screen.dart';
 import 'detail_screen.dart';
@@ -23,6 +24,8 @@ import 'widgets/sinema_image.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Live TV's player engine (plays the MPEG-TS that IPTV servers send).
+  MediaKit.ensureInitialized();
   final settings = SettingsController();
   await settings.load();
   await ServerStore.instance.load();

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -247,8 +248,10 @@ class IptvRepository extends ChangeNotifier {
     _refreshing.add(sourceId);
     _errors.remove(sourceId);
     notifyListeners();
+    var ok = false;
     try {
       final items = source.type == IptvSourceType.xtream ? await _fetchXtream(source) : await _fetchM3u(source);
+      ok = true;
       _itemsBySource[sourceId] = items;
       _invalidate();
       final file = await _playlistFile(sourceId);
@@ -259,7 +262,8 @@ class IptvRepository extends ChangeNotifier {
       _refreshing.remove(sourceId);
       notifyListeners();
     }
-    await refreshEpg(sourceId);
+    // No point fetching the guide from a server we just failed to reach.
+    if (ok) await refreshEpg(sourceId);
   }
 
   // The M3U header may name its own guide; remembered per refresh so a
@@ -297,7 +301,7 @@ class IptvRepository extends ChangeNotifier {
     // Validate the login first so a typo gives a clear message.
     final account = await _client
         .get(Uri.parse('${source.serverBase}/player_api.php').replace(queryParameters: {'username': source.username, 'password': source.password}), headers: source.headers)
-        .timeout(const Duration(seconds: 30));
+        .timeout(const Duration(seconds: 45));
     if (account.statusCode != 200) throw HttpException('The server returned HTTP ${account.statusCode}.');
     final info = jsonDecode(account.body);
     final userInfo = info is Map<String, dynamic> ? info['user_info'] : null;
@@ -384,6 +388,9 @@ class IptvRepository extends ChangeNotifier {
   }
 
   String _friendlyError(Object e) {
+    if (e is TimeoutException) {
+      return 'The server didn\'t answer. Check the address — many providers need a port, like http://host:8080 — or try their backup address.';
+    }
     if (e is SocketException) return 'Couldn\'t reach the server. Check the address and your connection.';
     if (e is HttpException) return e.message;
     if (e is FormatException) return e.message;

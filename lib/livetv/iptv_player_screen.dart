@@ -1,8 +1,9 @@
 import 'dart:async';
 
-import 'package:better_native_video_player/better_native_video_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
@@ -10,11 +11,13 @@ import 'iptv_repository.dart';
 import 'live_tv_screen.dart' show ensureUnlocked, playCatchup;
 import 'multiview_screen.dart';
 
-int _nextIptvControllerId = 50000;
-
 // Player for Live TV channels and IPTV movies/episodes. Deliberately lean:
 // no server negotiation, just the stream URL, with TiviMate-style channel
 // zapping (up/down, a channel list, now/next info) when playing live.
+//
+// Runs on media_kit (libmpv/ffmpeg) rather than the system player: IPTV is
+// mostly raw MPEG-TS (Dispatcharr, Xtream ".ts", HDHomeRun), which iOS's
+// AVPlayer refuses outright. mpv plays TS, HLS and everything else.
 class IptvPlayerScreen extends StatefulWidget {
   const IptvPlayerScreen({super.key, required this.items, required this.initialIndex, this.subtitle});
 
@@ -30,7 +33,9 @@ class IptvPlayerScreen extends StatefulWidget {
 
 class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   final _repo = IptvRepository.instance;
-  late final NativeVideoPlayerController _controller;
+  late final Player _player;
+  late final VideoController _video;
+  final List<StreamSubscription<dynamic>> _subs = [];
   late int _index = widget.initialIndex;
   String? _error;
   bool _triedHlsFallback = false;
@@ -38,9 +43,13 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   bool _isBuffering = true;
   bool _showChannelList = false;
   bool _userPaused = false;
+  bool _showControls = true;
+  bool _hasPlayed = false;
+  int _reconnects = 0;
   Duration _lastPosition = Duration.zero;
   Timer? _pollTimer;
   Timer? _clockTimer;
+  Timer? _hideTimer;
   int _zapToken = 0;
 
   IptvItem get _item => widget.items[_index];
@@ -51,15 +60,13 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     super.initState();
     SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _controller = NativeVideoPlayerController(
-      id: _nextIptvControllerId++,
-      autoPlay: true,
-      showNativeControls: false,
-      allowsPictureInPicture: true,
-      canStartPictureInPictureAutomatically: true,
-      mediaInfo: NativeVideoPlayerMediaInfo(title: _item.name, subtitle: widget.subtitle),
-    );
-    _controller.addActivityListener(_onActivity);
+    _player = Player(configuration: PlayerConfiguration(title: _item.name, bufferSize: 16 * 1024 * 1024));
+    _video = VideoController(_player);
+    _subs
+      ..add(_player.stream.error.listen(_onError))
+      ..add(_player.stream.completed.listen((done) {
+        if (done) _onCompleted();
+      }));
     _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _poll());
     // Keeps the now/next progress bars moving.
     _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -69,11 +76,17 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   }
 
   Future<void> _start() async {
-    try {
-      await _controller.initialize();
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Failed to start the player.\n$e');
-      return;
+    // Let initState finish before _open's first setState.
+    await Future<void>.value();
+    final native = _player.platform;
+    if (native is NativePlayer) {
+      try {
+        // Live-friendly: give up on a dead stream quickly instead of hanging,
+        // and keep a modest cache so zapping stays snappy.
+        await native.setProperty('network-timeout', '20');
+        await native.setProperty('cache', 'yes');
+        await native.setProperty('demuxer-max-back-bytes', '${8 * 1024 * 1024}');
+      } catch (_) {}
     }
     await _open();
   }
@@ -86,10 +99,13 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
       _error = null;
       _isBuffering = true;
       _userPaused = false;
+      _hasPlayed = false;
       _lastPosition = Duration.zero;
     });
+    _bumpControls();
     try {
-      await _controller.load(url: overrideUrl ?? item.url, headers: source?.headers ?? const {}, force: true);
+      final headers = source?.headers ?? const <String, String>{};
+      await _player.open(Media(overrideUrl ?? item.url, httpHeaders: headers.isEmpty ? null : headers));
       if (token != _zapToken) return;
       _repo.markWatched(item);
     } catch (e) {
@@ -97,17 +113,31 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     }
   }
 
-  void _onActivity(PlayerActivityEvent event) {
-    if (event.state == PlayerActivityState.error) {
-      _handleError((event.data?['message'] as String?) ?? 'This stream couldn\'t be played.');
-    } else if (event.state == PlayerActivityState.completed && !_isLive) {
-      if (!mounted) return;
-      // Series: roll straight into the next episode of the season.
-      if (_index < widget.items.length - 1) {
-        _zap(1);
+  // mpv reports plenty of harmless hiccups as errors (a dropped packet, a
+  // missing subtitle). Only treat it as fatal before anything has played.
+  void _onError(String message) {
+    if (_hasPlayed || !mounted) return;
+    _handleError(message.isEmpty ? 'This stream couldn\'t be played.' : message);
+  }
+
+  void _onCompleted() {
+    if (!mounted) return;
+    if (_isLive) {
+      // A live stream "ending" means the connection dropped: reconnect a few
+      // times before giving up, as TiviMate does.
+      if (_reconnects < 3) {
+        _reconnects++;
+        _open();
       } else {
-        Navigator.of(context).maybePop();
+        _handleError('The channel stopped sending video.');
       }
+      return;
+    }
+    // Series: roll straight into the next episode of the season.
+    if (_index < widget.items.length - 1) {
+      _zap(1);
+    } else {
+      Navigator.of(context).maybePop();
     }
   }
 
@@ -132,11 +162,16 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   // stream hasn't produced a frame yet).
   void _poll() {
     if (!mounted || _error != null) return;
-    final position = _controller.currentPosition;
+    final state = _player.state;
+    final position = state.position;
     final advancing = position > _lastPosition;
     _lastPosition = position;
-    final playing = !_userPaused && (advancing || _controller.activityState.isPlaying);
-    final buffering = !_userPaused && !advancing;
+    if (advancing && !_hasPlayed) {
+      _hasPlayed = true;
+      _reconnects = 0;
+    }
+    final playing = !_userPaused && (advancing || state.playing);
+    final buffering = !_userPaused && (!_hasPlayed || state.buffering);
     if (playing != _isPlaying || buffering != _isBuffering) {
       setState(() {
         _isPlaying = playing;
@@ -159,6 +194,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
       _showChannelList = false;
     });
     _triedHlsFallback = false;
+    _reconnects = 0;
     _open();
   }
 
@@ -273,20 +309,38 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
         _userPaused = true;
         _isBuffering = false;
       });
-      await _controller.pause();
+      await _player.pause();
     } else {
       setState(() {
         _isPlaying = true;
         _userPaused = false;
       });
-      await _controller.play();
+      await _player.play();
     }
   }
 
   void _seekBy(Duration offset) {
-    final target = _controller.currentPosition + offset;
-    final duration = _controller.duration;
-    _controller.seekTo(target < Duration.zero ? Duration.zero : (duration > Duration.zero && target > duration ? duration : target));
+    final target = _player.state.position + offset;
+    final duration = _player.state.duration;
+    _player.seek(target < Duration.zero ? Duration.zero : (duration > Duration.zero && target > duration ? duration : target));
+  }
+
+  // Controls fade out a few seconds after the last tap while playing.
+  void _bumpControls() {
+    _hideTimer?.cancel();
+    if (!_showControls) setState(() => _showControls = true);
+    _hideTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && _isPlaying && !_showChannelList) setState(() => _showControls = false);
+    });
+  }
+
+  void _toggleControls() {
+    if (_showControls) {
+      _hideTimer?.cancel();
+      setState(() => _showControls = false);
+    } else {
+      _bumpControls();
+    }
   }
 
   @override
@@ -294,8 +348,11 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     _pollTimer?.cancel();
     _clockTimer?.cancel();
     _sleepTimer?.cancel();
-    _controller.removeActivityListener(_onActivity);
-    _controller.dispose();
+    _hideTimer?.cancel();
+    for (final sub in _subs) {
+      sub.cancel();
+    }
+    _player.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -307,15 +364,24 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
         body: Stack(
           fit: StackFit.expand,
           children: [
-            NativeVideoPlayer(
-              controller: _controller,
-              overlayBuilder: (overlayContext, controller) => _Controls(
+            Video(controller: _video, controls: NoVideoControls, fill: Colors.black),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleControls,
+              child: AnimatedOpacity(
+                opacity: _showControls ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !_showControls,
+                  child: Listener(
+                    onPointerDown: (_) => _bumpControls(),
+                    child: _Controls(
                 item: _item,
                 subtitle: widget.subtitle,
                 isLive: _isLive,
                 isPlaying: _isPlaying,
                 canZap: widget.items.length > 1,
-                controller: controller,
+                player: _player,
                 onClose: () => Navigator.of(context).pop(),
                 onTogglePlay: _togglePlay,
                 onZapUp: () => _zap(-1),
@@ -328,6 +394,9 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
                 sleepLabel: _sleepLabel,
                 onRestart: _isLive && _repo.nowPlaying(_item) != null && _repo.canCatchup(_item, _repo.nowPlaying(_item)!) ? _restartProgram : null,
                 onMultiView: _isLive && widget.items.length > 1 ? _openMultiView : null,
+                    ),
+                  ),
+                ),
               ),
             ),
             if (_isBuffering && _error == null)
@@ -352,6 +421,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
                         FilledButton(
                           onPressed: () {
                             _triedHlsFallback = false;
+                            _reconnects = 0;
                             _open();
                           },
                           child: const Text('Retry'),
@@ -384,7 +454,7 @@ class _Controls extends StatelessWidget {
     required this.isLive,
     required this.isPlaying,
     required this.canZap,
-    required this.controller,
+    required this.player,
     required this.onClose,
     required this.onTogglePlay,
     required this.onZapUp,
@@ -404,7 +474,7 @@ class _Controls extends StatelessWidget {
   final bool isLive;
   final bool isPlaying;
   final bool canZap;
-  final NativeVideoPlayerController controller;
+  final Player player;
   final VoidCallback onClose;
   final VoidCallback onTogglePlay;
   final VoidCallback onZapUp;
@@ -498,8 +568,6 @@ class _Controls extends StatelessWidget {
                           icon: Icon(Icons.bedtime, size: 20, color: accent),
                           label: Text(sleepLabel!, style: TextStyle(color: accent)),
                         ),
-                  if (Theme.of(context).platform == TargetPlatform.iOS)
-                    IconButton(onPressed: () => controller.showAirPlayPicker(), icon: const Icon(Icons.airplay, size: 28), tooltip: 'AirPlay'),
                   IconButton(onPressed: onClose, icon: const Icon(Icons.close, size: 30)),
                 ],
               ),
@@ -581,11 +649,11 @@ class _Controls extends StatelessWidget {
                             ],
                           ))
                     : StreamBuilder<Duration>(
-                        stream: controller.positionStream,
-                        initialData: controller.currentPosition,
+                        stream: player.stream.position,
+                        initialData: player.state.position,
                         builder: (context, positionSnapshot) => StreamBuilder<Duration>(
-                          stream: controller.durationStream,
-                          initialData: controller.duration,
+                          stream: player.stream.duration,
+                          initialData: player.state.duration,
                           builder: (context, durationSnapshot) {
                             final position = positionSnapshot.data ?? Duration.zero;
                             final duration = durationSnapshot.data ?? Duration.zero;
@@ -599,7 +667,7 @@ class _Controls extends StatelessWidget {
                                     max: maxMs <= 0 ? 1 : maxMs,
                                     activeColor: accent,
                                     inactiveColor: Colors.white24,
-                                    onChanged: maxMs <= 0 ? null : (v) => controller.seekTo(Duration(milliseconds: v.round())),
+                                    onChanged: maxMs <= 0 ? null : (v) => player.seek(Duration(milliseconds: v.round())),
                                   ),
                                 ),
                                 Text('-${_format(duration > position ? duration - position : Duration.zero)}'),

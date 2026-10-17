@@ -1,14 +1,13 @@
-import 'package:better_native_video_player/better_native_video_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
 import 'iptv_player_screen.dart';
 import 'iptv_repository.dart';
 import 'live_tv_screen.dart' show ensureUnlocked;
-
-int _nextMultiViewId = 70000;
 
 // TiviMate's multi-view: up to four channels at once in a 2×2 grid. Only the
 // focused tile plays sound; tap a tile to move the sound to it, double-tap to
@@ -23,18 +22,13 @@ class MultiViewScreen extends StatefulWidget {
 }
 
 class _Tile {
-  _Tile(this.channel)
-      : controller = NativeVideoPlayerController(
-          id: _nextMultiViewId++,
-          autoPlay: true,
-          showNativeControls: false,
-          allowsPictureInPicture: false,
-          canStartPictureInPictureAutomatically: false,
-          mediaInfo: NativeVideoPlayerMediaInfo(title: channel.name),
-        );
+  _Tile(this.channel) : player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024)) {
+    video = VideoController(player);
+  }
 
   IptvItem channel;
-  final NativeVideoPlayerController controller;
+  final Player player;
+  late final VideoController video;
   bool failed = false;
 }
 
@@ -56,10 +50,8 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
 
   Future<void> _start(_Tile tile) async {
     try {
-      await tile.controller.initialize();
-      final source = _repo.sourceFor(tile.channel.sourceId);
-      await tile.controller.load(url: tile.channel.url, headers: source?.headers ?? const {}, force: true);
       await _applyVolumes();
+      await tile.player.open(_media(tile.channel));
     } catch (_) {
       if (mounted) setState(() => tile.failed = true);
     }
@@ -82,17 +74,20 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
       _focus = index;
     });
     try {
-      final source = _repo.sourceFor(channel.sourceId);
-      await tile.controller.load(url: channel.url, headers: source?.headers ?? const {}, force: true);
-      await _applyVolumes();
+      await tile.player.open(_media(channel));
     } catch (_) {
       if (mounted) setState(() => tile.failed = true);
     }
   }
 
+  Media _media(IptvItem channel) {
+    final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
+    return Media(channel.url, httpHeaders: headers.isEmpty ? null : headers);
+  }
+
   void _removeTile(int index) {
     final tile = _tiles.removeAt(index);
-    tile.controller.dispose();
+    tile.player.dispose();
     setState(() => _focus = _tiles.isEmpty ? 0 : _focus.clamp(0, _tiles.length - 1));
     _applyVolumes();
   }
@@ -100,7 +95,8 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
   Future<void> _applyVolumes() async {
     for (var i = 0; i < _tiles.length; i++) {
       try {
-        await _tiles[i].controller.setVolume(i == _focus ? 1.0 : 0.0);
+        // media_kit volume is 0–100.
+        await _tiles[i].player.setVolume(i == _focus ? 100 : 0);
       } catch (_) {}
     }
   }
@@ -165,7 +161,7 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
   @override
   void dispose() {
     for (final tile in _tiles) {
-      tile.controller.dispose();
+      tile.player.dispose();
     }
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -228,7 +224,7 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          IgnorePointer(child: NativeVideoPlayer(controller: tile.controller)),
+          IgnorePointer(child: Video(controller: tile.video, controls: NoVideoControls, fill: Colors.black)),
           if (tile.failed)
             const ColoredBox(color: Colors.black87, child: Center(child: Text('Couldn\'t play this channel', style: TextStyle(color: Colors.white70)))),
           // Focus ring + label.

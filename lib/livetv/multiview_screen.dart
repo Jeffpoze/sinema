@@ -24,7 +24,7 @@ class MultiViewScreen extends StatefulWidget {
 
 class _Tile {
   _Tile(this.channel) : player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024)) {
-    video = VideoController(player);
+    video = liveVideoController(player);
   }
 
   IptvItem channel;

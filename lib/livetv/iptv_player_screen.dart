@@ -71,7 +71,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _player = Player(configuration: PlayerConfiguration(title: _item.name, bufferSize: 16 * 1024 * 1024, logLevel: liveLogLevel));
     _log = MpvLogTail(_player);
-    _video = VideoController(_player);
+    _video = liveVideoController(_player);
     _subs
       ..add(_player.stream.error.listen(_onError))
       ..add(_player.stream.completed.listen((done) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -26,6 +27,17 @@ Future<void> tuneForLive(Player player, {bool softwareDecode = false}) async {
   await set('cache-on-disk', 'no');
   if (softwareDecode) await set('hwdec', 'no');
 }
+
+// How Live TV draws video. On iPhone, media_kit's hardware renderer is built
+// on OpenGL ES, which recent iOS versions no longer provide — mpv then has no
+// render context and never shows a picture. Its software renderer works
+// everywhere; decoding still uses the hardware decoder, copying frames back.
+VideoController liveVideoController(Player player) => VideoController(
+      player,
+      configuration: Platform.isIOS
+          ? const VideoControllerConfiguration(enableHardwareAcceleration: false, hwdec: 'auto-copy')
+          : const VideoControllerConfiguration(),
+    );
 
 // The video surface must exist before a stream is opened, or mpv starts
 // with no video output ("No render context set") and never shows a picture.

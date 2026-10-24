@@ -941,7 +941,7 @@ class _GuideTabState extends State<_GuideTab> {
     _stopPreview();
     final player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024, logLevel: liveLogLevel));
     _player = player;
-    _video = VideoController(player);
+    _video = liveVideoController(player);
     _previewLog = MpvLogTail(player);
     _previewErrors = player.stream.error.listen((message) {
       if (message.isNotEmpty) _previewError = message;

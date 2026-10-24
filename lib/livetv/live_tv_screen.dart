@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../servers_screen.dart';
 import '../settings_controller.dart';
@@ -41,7 +43,7 @@ class LiveTvScreen extends StatefulWidget {
 
 class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderStateMixin {
   final _repo = IptvRepository.instance;
-  late final TabController _tabs = TabController(length: 4, vsync: this);
+  late final TabController _tabs = TabController(length: 5, vsync: this);
   final _search = TextEditingController();
   bool _searching = false;
   Timer? _clock;
@@ -124,13 +126,28 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
                 ),
             ],
             bottom: _repo.hasSources
-                ? TabBar(
-                    controller: _tabs,
-                    isScrollable: false,
-                    indicatorColor: Theme.of(context).colorScheme.primary,
-                    labelColor: Colors.white,
-                    unselectedLabelColor: _muted,
-                    tabs: const [Tab(text: 'TV'), Tab(text: 'Guide'), Tab(text: 'Movies'), Tab(text: 'Series')],
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(56),
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      // Plex-style pill tabs.
+                      child: TabBar(
+                        controller: _tabs,
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 18),
+                        dividerColor: Colors.transparent,
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        indicator: ShapeDecoration(shape: StadiumBorder(side: BorderSide(color: Colors.white.withValues(alpha: .55), width: 1.5))),
+                        splashBorderRadius: BorderRadius.circular(24),
+                        labelColor: Colors.white,
+                        unselectedLabelColor: _muted,
+                        labelStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        unselectedLabelStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                        tabs: const [Tab(text: 'Guide'), Tab(text: "What's On"), Tab(text: 'Channels'), Tab(text: 'Movies'), Tab(text: 'Series')],
+                      ),
+                    ),
                   )
                 : null,
           ),
@@ -140,8 +157,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with SingleTickerProviderSt
                   controller: _tabs,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
+                    // Searching from the Guide or What's On shows results in place.
+                    _search.text.trim().isEmpty ? const _GuideTab() : _ChannelsTab(query: _search.text),
+                    _search.text.trim().isEmpty ? const _WhatsOnTab() : _ChannelsTab(query: _search.text),
                     _ChannelsTab(query: _search.text),
-                    const _GuideTab(),
                     _VodTab(kind: IptvKind.movie, query: _search.text),
                     _VodTab(kind: IptvKind.series, query: _search.text),
                   ],
@@ -711,6 +730,136 @@ class _ChannelRow extends StatelessWidget {
 
 // ------------------------------------------------------------------ Guide
 
+// Clock time in the phone's own 12/24-hour style ("9:30 PM" or "21:30").
+String _clockOf(BuildContext context, DateTime t) =>
+    MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(t), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context));
+
+String _timeLeft(EpgProgram p, DateTime now) {
+  final left = p.end.difference(now);
+  if (left.inMinutes < 1) return 'Ending';
+  if (left.inMinutes < 60) return '${left.inMinutes}m left';
+  final h = left.inHours;
+  final m = left.inMinutes.remainder(60);
+  return m == 0 ? '${h}h left' : '${h}h ${m}m left';
+}
+
+String _dayLabel(DateTime day, DateTime now) {
+  final d = DateUtils.dateOnly(day);
+  final today = DateUtils.dateOnly(now);
+  final diff = d.difference(today).inDays;
+  if (diff == 0) return 'Today';
+  if (diff == 1) return 'Tomorrow';
+  if (diff == -1) return 'Yesterday';
+  return '${_weekday(d)} ${d.day}';
+}
+
+// Programme details: watch, catch-up, reminder.
+void _showProgram(BuildContext context, IptvItem channel, EpgProgram program, List<IptvItem> channels, {VoidCallback? onWatch}) {
+  final airing = program.isAiringAt(DateTime.now());
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (program.icon != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: SinemaImage(imageUrl: program.icon!, fit: BoxFit.cover, errorWidget: (_, _, _) => const ColoredBox(color: Color(0xFF16181C))),
+                  ),
+                ),
+              ),
+            Row(
+              children: [
+                _ChannelLogo(channel: channel, width: 44, height: 30),
+                const SizedBox(width: 10),
+                Expanded(child: Text(channel.name, style: const TextStyle(color: _muted))),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(program.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text(
+              [
+                '${_dayLabel(program.start, DateTime.now())} · ${_clockOf(context, program.start)} – ${_clockOf(context, program.end)}',
+                if (airing) _timeLeft(program, DateTime.now()),
+                if (program.category != null) program.category!,
+              ].join(' · '),
+              style: const TextStyle(color: _muted),
+            ),
+            if (program.description != null && program.description!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(program.description!, maxLines: 8, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.4)),
+            ],
+            const SizedBox(height: 20),
+            if (IptvRepository.instance.canCatchup(channel, program)) ...[
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    playCatchup(context, channel, program);
+                  },
+                  icon: const Icon(Icons.replay),
+                  label: Text(airing ? 'Watch from Start' : 'Watch (Catch-up)'),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (program.start.isAfter(DateTime.now())) ...[
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: AnimatedBuilder(
+                  animation: ReminderService.instance,
+                  builder: (context, _) {
+                    final set = ReminderService.instance.has(channel, program);
+                    return OutlinedButton.icon(
+                      onPressed: () => toggleReminder(context, channel, program),
+                      icon: Icon(set ? Icons.notifications_active : Icons.notifications_none),
+                      label: Text(set ? 'Reminder Set' : 'Remind Me'),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  if (onWatch != null) {
+                    onWatch();
+                  } else {
+                    _play(context, channels, channels.indexOf(channel));
+                  }
+                },
+                icon: const Icon(Icons.play_arrow),
+                label: Text(airing ? 'Watch Now' : 'Watch ${channel.name} Live'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// Plex-style guide: a muted live preview of the channel you tap on top, then
+// a day/time bar and the grid of channel tiles and programme cards with a
+// "now" line. Tap a channel (or what's on it now) to preview it, tap the
+// preview again or its expand button to watch full screen.
 class _GuideTab extends StatefulWidget {
   const _GuideTab();
 
@@ -719,236 +868,313 @@ class _GuideTab extends StatefulWidget {
 }
 
 class _GuideTabState extends State<_GuideTab> {
-  static const _pxPerMinute = 4.0;
-  static const _channelColumn = 112.0;
-  static const _rowHeight = 64.0;
-  static const _span = Duration(hours: 24);
+  static const _pxPerMinute = 5.0;
+  static const _channelColumn = 84.0;
+  static const _rowHeight = 78.0;
 
-  // The grid starts half an hour before now (rounded to the half hour) so
-  // what's on right now is visible straight away with a bit of context.
+  final _repo = IptvRepository.instance;
+
+  // The grid's time axis starts at the beginning of yesterday when any channel
+  // has catch-up (so past shows are reachable), otherwise at today's midnight,
+  // and runs two days ahead — as far as guides usually go.
   late final DateTime _origin = () {
-    final now = DateTime.now();
-    final rounded = DateTime(now.year, now.month, now.day, now.hour, now.minute >= 30 ? 30 : 0);
-    return rounded.subtract(const Duration(minutes: 30));
+    final today = DateUtils.dateOnly(DateTime.now());
+    return _repo.liveChannels.any((c) => c.hasCatchup) ? today.subtract(const Duration(days: 1)) : today;
   }();
-  double _offset = 0;
+  late final DateTime _end = DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 3));
+  late double _offset = _xFor(_roundedNow().subtract(const Duration(minutes: 30)));
+
+  // Live preview.
+  Player? _player;
+  VideoController? _video;
+  IptvItem? _previewing;
+  bool _muted = true;
+  bool _previewFailed = false;
+  StreamSubscription<String>? _previewErrors;
+
+  @override
+  void initState() {
+    super.initState();
+    IptvPlayerScreen.openCount.addListener(_onFullScreenChanged);
+    _repo.ensureLoaded().then((_) {
+      if (!mounted || _previewing != null || IptvPlayerScreen.openCount.value > 0) return;
+      final last = _repo.lastChannel;
+      if (last != null && !_repo.isLocked(last)) _preview(last);
+    });
+  }
+
+  @override
+  void dispose() {
+    IptvPlayerScreen.openCount.removeListener(_onFullScreenChanged);
+    _stopPreview();
+    super.dispose();
+  }
+
+  // Full-screen player opened (from anywhere): stop the preview. Closed:
+  // preview whatever was watched last.
+  void _onFullScreenChanged() {
+    if (!mounted) return;
+    if (IptvPlayerScreen.openCount.value > 0) {
+      if (_player != null) setState(_stopPreview);
+    } else {
+      final last = _repo.lastChannel ?? _previewing;
+      if (last != null && !_repo.isLocked(last)) _preview(last);
+    }
+  }
+
+  static DateTime _roundedNow() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, now.hour, now.minute >= 30 ? 30 : 0);
+  }
 
   double _xFor(DateTime t) => t.difference(_origin).inSeconds / 60 * _pxPerMinute;
+  DateTime _timeAt(double x) => _origin.add(Duration(seconds: (x / _pxPerMinute * 60).round()));
+  double get _maxOffset => _xFor(_end);
 
-  void _showProgram(IptvItem channel, EpgProgram program, List<IptvItem> channels) {
-    final airing = program.isAiringAt(DateTime.now());
-    showModalBottomSheet<void>(
+  void _jumpTo(DateTime t) => setState(() => _offset = _xFor(t).clamp(0.0, _maxOffset));
+
+  Future<void> _preview(IptvItem channel) async {
+    if (!await ensureUnlocked(context, channel) || !mounted || IptvPlayerScreen.openCount.value > 0) return;
+    if (_player == null) {
+      final player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024));
+      _player = player;
+      _video = VideoController(player);
+      _previewErrors = player.stream.error.listen((_) {
+        if (mounted && player.state.position == Duration.zero) setState(() => _previewFailed = true);
+      });
+    }
+    setState(() {
+      _previewing = channel;
+      _previewFailed = false;
+    });
+    final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
+    try {
+      await _player!.setVolume(_muted ? 0 : 100);
+      await _player!.open(Media(channel.url, httpHeaders: headers.isEmpty ? null : headers));
+    } catch (_) {
+      if (mounted) setState(() => _previewFailed = true);
+    }
+  }
+
+  // Frees the provider connection: many plans allow a single stream, so the
+  // preview must stop before the full-screen player starts.
+  void _stopPreview() {
+    _previewErrors?.cancel();
+    _previewErrors = null;
+    _player?.dispose();
+    _player = null;
+    _video = null;
+  }
+
+  Future<void> _watchFullScreen(IptvItem channel, List<IptvItem> channels) async {
+    final list = channels.contains(channel) ? channels : [channel];
+    // Free the stream first; the preview resumes when full screen closes.
+    setState(_stopPreview);
+    await _play(context, list, list.indexOf(channel));
+  }
+
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    _player?.setVolume(_muted ? 0 : 100);
+  }
+
+  void _onChannelTap(IptvItem channel, List<IptvItem> channels) {
+    if (_previewing?.id == channel.id && _player != null && !_previewFailed) {
+      _watchFullScreen(channel, channels);
+    } else {
+      _preview(channel);
+    }
+  }
+
+  void _onProgramTap(IptvItem channel, EpgProgram program, List<IptvItem> channels) {
+    if (program.isAiringAt(DateTime.now())) {
+      _onChannelTap(channel, channels);
+    } else {
+      _showProgram(context, channel, program, channels, onWatch: () => _watchFullScreen(channel, channels));
+    }
+  }
+
+  Future<void> _pickDay(BuildContext anchor) async {
+    final now = DateTime.now();
+    final days = <DateTime>[
+      for (var d = _origin; d.isBefore(_end); d = DateUtils.addDaysToDate(d, 1)) d,
+    ];
+    final box = anchor.findRenderObject() as RenderBox?;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+    final topLeft = box.localToGlobal(Offset(0, box.size.height), ancestor: overlay);
+    final picked = await showMenu<DateTime>(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  _ChannelLogo(channel: channel, width: 44, height: 30),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(channel.name, style: const TextStyle(color: _muted))),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Text(program.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text('${_hhmm(program.start)} – ${_hhmm(program.end)}', style: const TextStyle(color: _muted)),
-              if (program.description != null && program.description!.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(program.description!, maxLines: 8, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.4)),
-              ],
-              const SizedBox(height: 20),
-              if (IptvRepository.instance.canCatchup(channel, program)) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop();
-                      playCatchup(context, channel, program);
-                    },
-                    icon: const Icon(Icons.replay),
-                    label: Text(airing ? 'Watch from Start' : 'Watch (Catch-up)'),
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
-              if (program.start.isAfter(DateTime.now())) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: AnimatedBuilder(
-                    animation: ReminderService.instance,
-                    builder: (context, _) {
-                      final set = ReminderService.instance.has(channel, program);
-                      return OutlinedButton.icon(
-                        onPressed: () => toggleReminder(context, channel, program),
-                        icon: Icon(set ? Icons.notifications_active : Icons.notifications_none),
-                        label: Text(set ? 'Reminder Set' : 'Remind Me'),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.of(sheetContext).pop();
-                    _play(context, channels, channels.indexOf(channel));
-                  },
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(airing ? 'Watch Now' : 'Watch ${channel.name} Live'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      position: RelativeRect.fromLTRB(topLeft.dx, topLeft.dy + 4, overlay.size.width - topLeft.dx - box.size.width, 0),
+      color: const Color(0xFF1E2025),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      items: [for (final d in days) PopupMenuItem(value: d, child: Text(_dayLabel(d, now)))],
     );
+    if (picked == null) return;
+    if (DateUtils.isSameDay(picked, now)) {
+      _jumpTo(_roundedNow().subtract(const Duration(minutes: 30)));
+    } else {
+      // Same time of day on the chosen day; evenings for future days.
+      final hour = picked.isAfter(now) ? 18 : now.hour;
+      _jumpTo(DateTime(picked.year, picked.month, picked.day, hour));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final repo = IptvRepository.instance;
-    if (!repo.hasGuide) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Text(
-            'No TV guide yet. Add an EPG (XMLTV) URL to your playlist — Xtream Codes logins use the provider\'s guide automatically.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: _muted, height: 1.4),
-          ),
-        ),
-      );
-    }
     final accent = Theme.of(context).colorScheme.primary;
     return ValueListenableBuilder<String>(
       valueListenable: _liveGroup,
       builder: (context, group, _) {
-        final options = _liveGroupOptions(repo);
+        final options = _liveGroupOptions(_repo);
         final selected = options.contains(group) ? group : _allGroup;
-        final channels = _channelsForGroup(repo, selected, '');
+        final channels = _channelsForGroup(_repo, selected, '');
+        final now = DateTime.now();
+        final visibleStart = _timeAt(_offset);
         return Column(
           children: [
-            _GroupChips(groups: options, selected: selected, onSelect: (g) => _liveGroup.value = g),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final viewport = constraints.maxWidth - _channelColumn;
-                  final maxOffset = (_span.inMinutes * _pxPerMinute - viewport).clamp(0.0, double.infinity);
-                  final visibleStart = _origin.add(Duration(seconds: (_offset / _pxPerMinute * 60).round()));
-                  final visibleEnd = visibleStart.add(Duration(seconds: (viewport / _pxPerMinute * 60).round()));
-                  final nowX = _xFor(DateTime.now()) - _offset;
-                  return GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragUpdate: (d) => setState(() => _offset = (_offset - d.delta.dx).clamp(0.0, maxOffset)),
-                    child: Column(
-                      children: [
-                        // Time ruler.
-                        SizedBox(
-                          height: 30,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: _LivePreview(
+                channel: _previewing,
+                video: _video,
+                program: _previewing == null ? null : _repo.nowPlaying(_previewing!),
+                muted: _muted,
+                failed: _previewFailed,
+                onToggleMute: _toggleMute,
+                onExpand: _previewing == null ? null : () => _watchFullScreen(_previewing!, channels),
+                onRetry: _previewing == null ? null : () => _preview(_previewing!),
+              ),
+            ),
+            // Day + time bar.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  Builder(
+                    builder: (anchor) => Material(
+                      color: const Color(0xFF1E2025),
+                      shape: const StadiumBorder(),
+                      child: InkWell(
+                        customBorder: const StadiumBorder(),
+                        onTap: () => _pickDay(anchor),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 9, 12, 9),
                           child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              SizedBox(
-                                width: _channelColumn,
-                                child: Center(child: Text(_hhmm(DateTime.now()), style: TextStyle(color: accent, fontWeight: FontWeight.w700))),
-                              ),
-                              Expanded(
-                                child: ClipRect(
-                                  child: Stack(
-                                    children: [
-                                      for (var m = 0; m <= _span.inMinutes; m += 30)
-                                        if (m * _pxPerMinute - _offset > -120 && m * _pxPerMinute - _offset < viewport)
-                                          Positioned(
-                                            left: m * _pxPerMinute - _offset + 6,
-                                            top: 6,
-                                            child: Text(_hhmm(_origin.add(Duration(minutes: m))), style: const TextStyle(fontSize: 12, color: _muted)),
-                                          ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                              Text(_dayLabel(visibleStart, now), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.keyboard_arrow_down, size: 20),
                             ],
                           ),
                         ),
-                        Expanded(
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(_clockOf(context, visibleStart), style: const TextStyle(color: Color(0xFFD3D2D6), fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  if ((_xFor(now) - _offset).abs() > 60 * _pxPerMinute)
+                    TextButton(onPressed: () => _jumpTo(_roundedNow().subtract(const Duration(minutes: 30))), child: const Text('Now')),
+                  _RoundButton(icon: Icons.chevron_left, onTap: () => setState(() => _offset = (_offset - 60 * _pxPerMinute).clamp(0.0, _maxOffset))),
+                  const SizedBox(width: 8),
+                  _RoundButton(icon: Icons.chevron_right, onTap: () => setState(() => _offset = (_offset + 60 * _pxPerMinute).clamp(0.0, _maxOffset))),
+                ],
+              ),
+            ),
+            _GroupChips(groups: options, selected: selected, onSelect: (g) => _liveGroup.value = g),
+            Expanded(
+              child: !_repo.hasGuide && channels.isEmpty
+                  ? Center(child: Text(_repo.isAnyRefreshing ? 'Loading channels…' : 'No channels here.', style: const TextStyle(color: _muted)))
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final viewport = constraints.maxWidth - _channelColumn - 16;
+                        final visibleEnd = _timeAt(_offset + viewport);
+                        final nowX = _xFor(now) - _offset;
+                        return GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onHorizontalDragUpdate: (d) => setState(() => _offset = (_offset - d.delta.dx).clamp(0.0, _maxOffset)),
                           child: Stack(
                             children: [
                               ListView.builder(
+                                padding: const EdgeInsets.only(left: 16, bottom: 24),
                                 itemExtent: _rowHeight,
                                 itemCount: channels.length,
                                 itemBuilder: (context, index) {
                                   final channel = channels[index];
-                                  final programs = repo.programsFor(channel).where((p) => p.end.isAfter(visibleStart) && p.start.isBefore(visibleEnd));
-                                  return Row(
-                                    children: [
-                                      InkWell(
-                                        onTap: () => _play(context, channels, index),
-                                        onLongPress: () => showChannelActions(context, channel, channels),
-                                        child: Container(
-                                          width: _channelColumn,
-                                          height: _rowHeight,
-                                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                                          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFF1B1D22)), right: BorderSide(color: Color(0xFF1B1D22)))),
-                                          child: Row(
-                                            children: [
-                                              _ChannelLogo(channel: channel, width: 36, height: 26),
-                                              const SizedBox(width: 6),
-                                              Expanded(child: Text(channel.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600))),
-                                            ],
-                                          ),
+                                  final programs = _repo.programsFor(channel).where((p) => p.end.isAfter(visibleStart) && p.start.isBefore(visibleEnd)).toList();
+                                  final isPreviewing = _previewing?.id == channel.id;
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    child: Row(
+                                      children: [
+                                        _ChannelTile(
+                                          channel: channel,
+                                          position: index,
+                                          selected: isPreviewing,
+                                          onTap: () => _onChannelTap(channel, channels),
+                                          onLongPress: () => showChannelActions(context, channel, channels),
                                         ),
-                                      ),
-                                      Expanded(
-                                        child: ClipRect(
-                                          child: Stack(
-                                            children: [
-                                              for (final p in programs)
-                                                Positioned(
-                                                  left: _xFor(p.start) - _offset,
-                                                  width: ((p.end.difference(p.start).inSeconds / 60) * _pxPerMinute).clamp(2.0, double.infinity),
-                                                  top: 0,
-                                                  bottom: 0,
-                                                  child: _ProgramCell(
-                                                    program: p,
-                                                    airing: p.isAiringAt(DateTime.now()),
-                                                    accent: accent,
-                                                    // Keep the title readable when a show started before the visible window.
-                                                    textInset: (_offset - _xFor(p.start)).clamp(0.0, double.infinity),
-                                                    onTap: () => _showProgram(channel, p, channels),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: ClipRect(
+                                            child: programs.isEmpty
+                                                ? _GuideCard(
+                                                    title: channel.name,
+                                                    subtitle: 'No guide information',
+                                                    selected: isPreviewing,
+                                                    dim: true,
+                                                    textInset: 0,
+                                                    onTap: () => _onChannelTap(channel, channels),
+                                                  )
+                                                : Stack(
+                                                    children: [
+                                                      for (final p in programs)
+                                                        Positioned(
+                                                          left: _xFor(p.start) - _offset,
+                                                          width: ((p.end.difference(p.start).inSeconds / 60) * _pxPerMinute).clamp(4.0, double.infinity),
+                                                          top: 0,
+                                                          bottom: 0,
+                                                          child: _GuideCard(
+                                                            title: p.title,
+                                                            subtitle: p.isAiringAt(now) ? _timeLeft(p, now) : _clockOf(context, p.start),
+                                                            selected: isPreviewing && p.isAiringAt(now),
+                                                            dim: p.end.isBefore(now) && !_repo.canCatchup(channel, p),
+                                                            // Keep the title readable when a show started before the visible window.
+                                                            textInset: (_offset - _xFor(p.start)).clamp(0.0, double.infinity),
+                                                            onTap: () => _onProgramTap(channel, p, channels),
+                                                            onLongPress: () => _showProgram(context, channel, p, channels, onWatch: () => _watchFullScreen(channel, channels)),
+                                                          ),
+                                                        ),
+                                                    ],
                                                   ),
-                                                ),
-                                            ],
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   );
                                 },
                               ),
                               if (nowX >= 0 && nowX <= viewport)
                                 Positioned(
-                                  left: _channelColumn + nowX,
+                                  left: 16 + _channelColumn + 8 + nowX - 7,
                                   top: 0,
                                   bottom: 0,
-                                  child: IgnorePointer(child: Container(width: 2, color: accent)),
+                                  child: IgnorePointer(
+                                    child: Column(
+                                      children: [
+                                        CustomPaint(size: const Size(14, 9), painter: _TrianglePainter(accent)),
+                                        Expanded(child: Container(width: 2, color: accent)),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                             ],
                           ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
             ),
           ],
         );
@@ -957,35 +1183,421 @@ class _GuideTabState extends State<_GuideTab> {
   }
 }
 
-class _ProgramCell extends StatelessWidget {
-  const _ProgramCell({required this.program, required this.airing, required this.accent, required this.textInset, required this.onTap});
-  final EpgProgram program;
-  final bool airing;
-  final Color accent;
-  final double textInset;
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({required this.icon, required this.onTap});
+  final IconData icon;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(1, 3, 1, 3),
-          padding: EdgeInsets.fromLTRB(8 + textInset, 6, 6, 6),
-          decoration: BoxDecoration(
-            color: airing ? accent.withValues(alpha: .22) : const Color(0xFF16181C),
-            borderRadius: BorderRadius.circular(6),
-            border: airing ? Border.all(color: accent.withValues(alpha: .5)) : null,
-          ),
+  Widget build(BuildContext context) => Material(
+        color: const Color(0xFF1E2025),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(width: 40, height: 40, child: Icon(icon, size: 24)),
+        ),
+      );
+}
+
+class _TrianglePainter extends CustomPainter {
+  const _TrianglePainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_TrianglePainter old) => old.color != color;
+}
+
+// Square channel tile: logo with the channel number along the bottom.
+class _ChannelTile extends StatelessWidget {
+  const _ChannelTile({required this.channel, required this.position, required this.selected, required this.onTap, required this.onLongPress});
+  final IptvItem channel;
+  final int position;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return SizedBox(
+      width: _GuideTabState._channelColumn,
+      child: Material(
+        color: const Color(0xFF16181C),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: selected ? BorderSide(color: accent, width: 1.5) : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(program.title, maxLines: 1, overflow: TextOverflow.clip, softWrap: false, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              Text('${_hhmm(program.start)} – ${_hhmm(program.end)}', maxLines: 1, overflow: TextOverflow.clip, softWrap: false, style: const TextStyle(fontSize: 10, color: _muted)),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+                  child: Center(child: _ChannelLogo(channel: channel, width: 60, height: 34)),
+                ),
+              ),
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: .45), borderRadius: BorderRadius.circular(6)),
+                child: Text(
+                  channel.number?.toString() ?? '${position + 1}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: selected ? accent : Colors.white),
+                ),
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _GuideCard extends StatelessWidget {
+  const _GuideCard({required this.title, required this.subtitle, required this.selected, required this.dim, required this.textInset, required this.onTap, this.onLongPress});
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final bool dim;
+  final double textInset;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: Material(
+          color: const Color(0xFF1E2025),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: selected ? const BorderSide(color: Colors.white70, width: 1.5) : BorderSide.none,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            onLongPress: onLongPress,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(14 + textInset, 8, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: dim ? _muted : Colors.white),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.clip, softWrap: false, style: const TextStyle(fontSize: 13, color: _muted)),
+                ],
+              ),
+            ),
+          ),
+        ),
       );
+}
+
+// The preview pane at the top of the guide.
+class _LivePreview extends StatelessWidget {
+  const _LivePreview({
+    required this.channel,
+    required this.video,
+    required this.program,
+    required this.muted,
+    required this.failed,
+    required this.onToggleMute,
+    required this.onExpand,
+    required this.onRetry,
+  });
+  final IptvItem? channel;
+  final VideoController? video;
+  final EpgProgram? program;
+  final bool muted;
+  final bool failed;
+  final VoidCallback onToggleMute;
+  final VoidCallback? onExpand;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final channel = this.channel;
+    final video = this.video;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: GestureDetector(
+          onTap: failed ? onRetry : onExpand,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const ColoredBox(color: Color(0xFF0E0F12)),
+              if (channel != null && video != null && !failed)
+                IgnorePointer(child: Video(controller: video, controls: NoVideoControls, fill: Colors.black, wakelock: false)),
+              if (channel == null)
+                const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.live_tv_rounded, size: 40, color: Colors.white38),
+                      SizedBox(height: 10),
+                      Text('Tap a channel to preview it here', style: TextStyle(color: _muted)),
+                    ],
+                  ),
+                ),
+              if (failed && channel != null)
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Couldn\'t play ${channel.name}', style: const TextStyle(color: Colors.white70)),
+                      const SizedBox(height: 6),
+                      const Text('Tap to try again', style: TextStyle(color: _muted, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              if (channel != null) ...[
+                // Bottom caption over a soft gradient.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(14, 28, 14, 12),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black.withValues(alpha: .75)],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              program == null ? channel.name : 'Now On: ${program!.title}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                          if (channel.logo != null)
+                            Opacity(
+                              opacity: .55,
+                              child: SizedBox(
+                                width: 54,
+                                height: 24,
+                                child: SinemaImage(imageUrl: channel.logo!, fit: BoxFit.contain, errorWidget: (_, _, _) => const SizedBox.shrink()),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: IconButton(
+                    onPressed: onToggleMute,
+                    icon: Icon(muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
+                    tooltip: muted ? 'Unmute' : 'Mute',
+                  ),
+                ),
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: IconButton(
+                    onPressed: onExpand,
+                    style: IconButton.styleFrom(backgroundColor: Colors.black38),
+                    icon: const Icon(Icons.open_in_full_rounded),
+                    tooltip: 'Watch full screen',
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ------------------------------------------------------------- What's On
+
+// What's on right now, as rows of cards: your favourites first, then by the
+// guide's categories (Sports, News, Movies…) or, without those, by channel
+// group. Tap a card to watch.
+class _WhatsOnTab extends StatelessWidget {
+  const _WhatsOnTab();
+
+  static const _maxRows = 14;
+  static const _maxPerRow = 30;
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = IptvRepository.instance;
+    final now = DateTime.now();
+    final airing = <(IptvItem, EpgProgram)>[];
+    for (final c in repo.liveChannels) {
+      if (repo.isLocked(c)) continue;
+      final p = repo.nowPlaying(c, now);
+      if (p != null) airing.add((c, p));
+    }
+    if (airing.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            repo.hasGuide ? 'Nothing on the guide right now.' : 'What\'s On needs a TV guide. Add an EPG (XMLTV) URL to your playlist.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: _muted, height: 1.4),
+          ),
+        ),
+      );
+    }
+    final rows = <String, List<(IptvItem, EpgProgram)>>{};
+    final favorites = airing.where((e) => repo.isFavorite(e.$1)).toList();
+    if (favorites.isNotEmpty) rows['Your Favorites'] = favorites;
+    final recentIds = {for (final c in repo.recentChannels) c.id};
+    final recent = airing.where((e) => recentIds.contains(e.$1.id)).toList();
+    if (recent.isNotEmpty) rows['Recently Watched'] = recent;
+    final byCategory = <String, List<(IptvItem, EpgProgram)>>{};
+    final withCategory = airing.where((e) => e.$2.category != null).length;
+    final useCategories = withCategory > airing.length / 4;
+    for (final e in airing) {
+      final key = useCategories ? (e.$2.category ?? 'More') : e.$1.group;
+      (byCategory[key] ??= []).add(e);
+    }
+    final biggest = byCategory.entries.toList()..sort((a, b) => b.value.length.compareTo(a.value.length));
+    for (final e in biggest) {
+      if (rows.length >= _maxRows) break;
+      rows.putIfAbsent(e.key, () => e.value);
+    }
+    final allChannels = repo.liveChannels;
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 32),
+      children: [
+        for (final row in rows.entries) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+            child: Text(row.key, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(
+            height: 196,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: row.value.length > _maxPerRow ? _maxPerRow : row.value.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final (channel, program) = row.value[index];
+                return _OnNowCard(
+                  channel: channel,
+                  program: program,
+                  now: now,
+                  onTap: () => _play(context, allChannels, allChannels.indexOf(channel)),
+                  onLongPress: () => _showProgram(context, channel, program, allChannels),
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _OnNowCard extends StatelessWidget {
+  const _OnNowCard({required this.channel, required this.program, required this.now, required this.onTap, required this.onLongPress});
+  final IptvItem channel;
+  final EpgProgram program;
+  final DateTime now;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    final logoArt = Container(
+      color: const Color(0xFF1E2025),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(28),
+      child: _ChannelLogo(channel: channel, width: 120, height: 64),
+    );
+    return SizedBox(
+      width: 220,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 220,
+                height: 124,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    program.icon == null
+                        ? logoArt
+                        : SinemaImage(imageUrl: program.icon!, fit: BoxFit.cover, memCacheWidth: 660, errorWidget: (_, _, _) => logoArt),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: LinearProgressIndicator(value: program.progressAt(now), minHeight: 3, color: accent, backgroundColor: Colors.black45),
+                    ),
+                    if (program.icon != null && channel.logo != null)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                          child: _ChannelLogo(channel: channel, width: 40, height: 18),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(program.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 2),
+            Text(
+              '${channel.number != null ? '${channel.number} · ' : ''}${channel.name} · ${_timeLeft(program, now)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, color: _muted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------- Movies/Series

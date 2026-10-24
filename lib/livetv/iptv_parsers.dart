@@ -238,6 +238,8 @@ final _displayNamePattern = RegExp(r'<display-name[^>]*>(.*?)</display-name>', d
 final _programmePattern = RegExp(r'<programme\b([^>]*)>(.*?)</programme>', dotAll: true);
 final _titlePattern = RegExp(r'<title[^>]*>(.*?)</title>', dotAll: true);
 final _descPattern = RegExp(r'<desc[^>]*>(.*?)</desc>', dotAll: true);
+final _iconPattern = RegExp(r'<icon[^>]*\ssrc="([^"]+)"');
+final _categoryPattern = RegExp(r'<category[^>]*>(.*?)</category>', dotAll: true);
 
 EpgParseResult parseXmltv(({Uint8List bytes, int nowMs, int offsetMinutes}) input) {
   var bytes = input.bytes;
@@ -273,11 +275,16 @@ EpgParseResult parseXmltv(({Uint8List bytes, int nowMs, int offsetMinutes}) inpu
     final body = m.group(2)!;
     final title = _titlePattern.firstMatch(body)?.group(1);
     final desc = _descPattern.firstMatch(body)?.group(1);
+    // Artwork only for what's on now or later: keeps the cache small.
+    final icon = end.isAfter(now) ? _iconPattern.firstMatch(body)?.group(1) : null;
+    final category = _categoryPattern.firstMatch(body)?.group(1);
     (programs[_unescape(channel)] ??= []).add(EpgProgram(
       start: start,
       end: end,
       title: title == null ? 'No information' : _unescape(title).trim(),
       description: desc == null ? null : _unescape(desc).trim(),
+      icon: icon == null ? null : _unescape(icon).trim(),
+      category: category == null ? null : _unescape(category).trim(),
     ));
   }
   for (final list in programs.values) {

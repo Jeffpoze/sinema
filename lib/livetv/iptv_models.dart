@@ -203,12 +203,15 @@ class IptvItem {
 }
 
 class EpgProgram {
-  const EpgProgram({required this.start, required this.end, required this.title, this.description});
+  const EpgProgram({required this.start, required this.end, required this.title, this.description, this.icon, this.category});
 
   final DateTime start;
   final DateTime end;
   final String title;
   final String? description;
+  // Show artwork and the first <category> from the XMLTV guide, when given.
+  final String? icon;
+  final String? category;
 
   bool isAiringAt(DateTime time) => !time.isBefore(start) && time.isBefore(end);
 
@@ -218,13 +221,15 @@ class EpgProgram {
     return (time.difference(start).inSeconds / total).clamp(0.0, 1.0);
   }
 
-  List<dynamic> toJson() => [start.millisecondsSinceEpoch, end.millisecondsSinceEpoch, title, description];
+  List<dynamic> toJson() => [start.millisecondsSinceEpoch, end.millisecondsSinceEpoch, title, description, if (icon != null || category != null) ...[icon, category]];
 
   static EpgProgram fromJson(List<dynamic> j) => EpgProgram(
         start: DateTime.fromMillisecondsSinceEpoch((j[0] as num).toInt()),
         end: DateTime.fromMillisecondsSinceEpoch((j[1] as num).toInt()),
         title: j[2] as String,
         description: j.length > 3 ? j[3] as String? : null,
+        icon: j.length > 4 ? j[4] as String? : null,
+        category: j.length > 5 ? j[5] as String? : null,
       );
 }
 

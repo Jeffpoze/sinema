@@ -13,6 +13,7 @@ import 'iptv_player_screen.dart';
 import 'iptv_repository.dart';
 import 'iptv_series_screen.dart';
 import 'iptv_sources_screen.dart';
+import 'live_playback.dart';
 import 'live_tv_settings_screen.dart';
 import 'reminder_service.dart';
 
@@ -884,12 +885,15 @@ class _GuideTabState extends State<_GuideTab> {
   late final DateTime _end = DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 3));
   late double _offset = _xFor(_roundedNow().subtract(const Duration(minutes: 30)));
 
-  // Live preview.
+  // Live preview: hidden until you pick a channel, like Plex.
   Player? _player;
   VideoController? _video;
+  MpvLogTail? _previewLog;
   IptvItem? _previewing;
   bool _previewMuted = true;
+  double _previewVolume = 70;
   bool _previewFailed = false;
+  String _previewError = '';
   StreamSubscription<String>? _previewErrors;
   Timer? _previewWatchdog;
 
@@ -897,11 +901,6 @@ class _GuideTabState extends State<_GuideTab> {
   void initState() {
     super.initState();
     IptvPlayerScreen.openCount.addListener(_onFullScreenChanged);
-    _repo.ensureLoaded().then((_) {
-      if (!mounted || _previewing != null || IptvPlayerScreen.openCount.value > 0) return;
-      final last = _repo.lastChannel;
-      if (last != null && !_repo.isLocked(last)) _preview(last);
-    });
   }
 
   @override
@@ -911,15 +910,15 @@ class _GuideTabState extends State<_GuideTab> {
     super.dispose();
   }
 
-  // Full-screen player opened (from anywhere): stop the preview. Closed:
-  // preview whatever was watched last.
+  // Full-screen player opened (from anywhere): stop the preview. Closed: if
+  // the preview was showing, bring it back on whatever was watched last.
   void _onFullScreenChanged() {
     if (!mounted) return;
     if (IptvPlayerScreen.openCount.value > 0) {
       if (_player != null) setState(_stopPreview);
-    } else {
-      final last = _repo.lastChannel ?? _previewing;
-      if (last != null && !_repo.isLocked(last)) _preview(last);
+    } else if (_previewing != null) {
+      final last = _repo.lastChannel ?? _previewing!;
+      if (!_repo.isLocked(last)) _preview(last);
     }
   }
 
@@ -934,39 +933,47 @@ class _GuideTabState extends State<_GuideTab> {
 
   void _jumpTo(DateTime t) => setState(() => _offset = _xFor(t).clamp(0.0, _maxOffset));
 
-  Future<void> _preview(IptvItem channel) async {
+  double get _effectiveVolume => _previewMuted ? 0 : _previewVolume;
+
+  Future<void> _preview(IptvItem channel, {bool softwareDecode = false}) async {
     if (!await ensureUnlocked(context, channel) || !mounted || IptvPlayerScreen.openCount.value > 0) return;
-    if (_player == null) {
-      final player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024));
-      _player = player;
-      _video = VideoController(player);
-      _previewErrors = player.stream.error.listen((_) {
-        if (mounted && player.state.position == Duration.zero) setState(() => _previewFailed = true);
-      });
-      final native = player.platform;
-      if (native is NativePlayer) {
-        try {
-          await native.setProperty('network-timeout', '20');
-        } catch (_) {}
-      }
-    }
+    // A fresh player each time keeps a failed decoder from sticking around.
+    _stopPreview();
+    final player = Player(configuration: const PlayerConfiguration(bufferSize: 8 * 1024 * 1024, logLevel: liveLogLevel));
+    _player = player;
+    _video = VideoController(player);
+    _previewLog = MpvLogTail(player);
+    _previewErrors = player.stream.error.listen((message) {
+      if (message.isNotEmpty) _previewError = message;
+    });
     setState(() {
       _previewing = channel;
       _previewFailed = false;
+      _previewError = '';
     });
+    await tuneForLive(player, softwareDecode: softwareDecode);
+    if (_player != player) return;
     final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
     try {
-      await _player!.setVolume(_previewMuted ? 0 : 100);
-      await _player!.open(Media(_repo.playbackUrl(channel), httpHeaders: headers.isEmpty ? null : headers));
-    } catch (_) {
-      if (mounted) setState(() => _previewFailed = true);
+      await player.setVolume(_effectiveVolume);
+      await player.open(Media(_repo.playbackUrl(channel), httpHeaders: headers.isEmpty ? null : headers));
+    } catch (e) {
+      _previewError = e.toString();
     }
-    // No picture after 20 s: say so instead of sitting on a black box.
+    // Nothing playing after a while: first retry with software decoding (some
+    // channels won't hardware-decode), then say what went wrong.
     _previewWatchdog?.cancel();
-    final watched = _player;
-    _previewWatchdog = Timer(const Duration(seconds: 20), () {
-      if (!mounted || _player != watched || watched == null) return;
-      if (watched.state.position == Duration.zero) setState(() => _previewFailed = true);
+    _previewWatchdog = Timer(Duration(seconds: softwareDecode ? 15 : 10), () {
+      if (!mounted || _player != player || player.state.position > Duration.zero) return;
+      if (!softwareDecode) {
+        _preview(channel, softwareDecode: true);
+      } else {
+        // Give up and release the provider connection.
+        setState(() {
+          _previewFailed = true;
+          _stopPreview();
+        });
+      }
     });
   }
 
@@ -976,10 +983,18 @@ class _GuideTabState extends State<_GuideTab> {
     _previewWatchdog?.cancel();
     _previewErrors?.cancel();
     _previewErrors = null;
+    _previewLog?.dispose();
     _player?.dispose();
     _player = null;
     _video = null;
   }
+
+  void _closePreview() => setState(() {
+        _stopPreview();
+        _previewLog = null;
+        _previewing = null;
+        _previewFailed = false;
+      });
 
   Future<void> _watchFullScreen(IptvItem channel, List<IptvItem> channels) async {
     final list = channels.contains(channel) ? channels : [channel];
@@ -989,8 +1004,19 @@ class _GuideTabState extends State<_GuideTab> {
   }
 
   void _toggleMute() {
-    setState(() => _previewMuted = !_previewMuted);
-    _player?.setVolume(_previewMuted ? 0 : 100);
+    setState(() {
+      _previewMuted = !_previewMuted;
+      if (!_previewMuted && _previewVolume < 5) _previewVolume = 50;
+    });
+    _player?.setVolume(_effectiveVolume);
+  }
+
+  void _setVolume(double v) {
+    setState(() {
+      _previewVolume = v;
+      _previewMuted = v < 1;
+    });
+    _player?.setVolume(_effectiveVolume);
   }
 
   void _onChannelTap(IptvItem channel, List<IptvItem> channels) {
@@ -1048,18 +1074,30 @@ class _GuideTabState extends State<_GuideTab> {
         final visibleStart = _timeAt(_offset);
         return Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: _LivePreview(
-                channel: _previewing,
-                video: _video,
-                program: _previewing == null ? null : _repo.nowPlaying(_previewing!),
-                muted: _previewMuted,
-                failed: _previewFailed,
-                onToggleMute: _toggleMute,
-                onExpand: _previewing == null ? null : () => _watchFullScreen(_previewing!, channels),
-                onRetry: _previewing == null ? null : () => _preview(_previewing!),
-              ),
+            // The preview slides in when you pick a channel and away when closed.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _previewing == null
+                  ? const SizedBox(width: double.infinity)
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: _LivePreview(
+                        channel: _previewing!,
+                        video: _video,
+                        program: _repo.nowPlaying(_previewing!),
+                        muted: _previewMuted,
+                        volume: _previewVolume,
+                        failed: _previewFailed,
+                        error: [if (_previewError.isNotEmpty) _previewError, if (_previewLog != null && _previewLog!.summary.isNotEmpty) _previewLog!.summary].join('\n'),
+                        onToggleMute: _toggleMute,
+                        onVolume: _setVolume,
+                        onExpand: () => _watchFullScreen(_previewing!, channels),
+                        onClose: _closePreview,
+                        onRetry: () => _preview(_previewing!),
+                      ),
+                    ),
             ),
             // Day + time bar.
             Padding(
@@ -1330,72 +1368,133 @@ class _GuideCard extends StatelessWidget {
       );
 }
 
-// The preview pane at the top of the guide.
-class _LivePreview extends StatelessWidget {
+// The preview pane at the top of the guide. Tap it to show or hide its
+// controls: mute, volume, full screen and close. Full screen only happens
+// from its button, never from tapping the picture.
+class _LivePreview extends StatefulWidget {
   const _LivePreview({
     required this.channel,
     required this.video,
     required this.program,
     required this.muted,
+    required this.volume,
     required this.failed,
+    required this.error,
     required this.onToggleMute,
+    required this.onVolume,
     required this.onExpand,
+    required this.onClose,
     required this.onRetry,
   });
-  final IptvItem? channel;
+  final IptvItem channel;
   final VideoController? video;
   final EpgProgram? program;
   final bool muted;
+  final double volume;
   final bool failed;
+  final String error;
   final VoidCallback onToggleMute;
-  final VoidCallback? onExpand;
-  final VoidCallback? onRetry;
+  final ValueChanged<double> onVolume;
+  final VoidCallback onExpand;
+  final VoidCallback onClose;
+  final VoidCallback onRetry;
+
+  @override
+  State<_LivePreview> createState() => _LivePreviewState();
+}
+
+class _LivePreviewState extends State<_LivePreview> {
+  bool _controls = true;
+  Timer? _hide;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleHide();
+  }
+
+  @override
+  void didUpdateWidget(_LivePreview old) {
+    super.didUpdateWidget(old);
+    // New channel: show the controls briefly again.
+    if (old.channel.id != widget.channel.id) {
+      setState(() => _controls = true);
+      _scheduleHide();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hide?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleHide() {
+    _hide?.cancel();
+    _hide = Timer(const Duration(seconds: 4), () {
+      if (mounted && !widget.failed) setState(() => _controls = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _controls = !_controls);
+    if (_controls) _scheduleHide();
+  }
+
+  // Any control use keeps them on screen a bit longer.
+  VoidCallback _keep(VoidCallback action) => () {
+        action();
+        _scheduleHide();
+      };
 
   @override
   Widget build(BuildContext context) {
-    final channel = this.channel;
-    final video = this.video;
+    final channel = widget.channel;
+    final video = widget.video;
+    final accent = Theme.of(context).colorScheme.primary;
+    final showControls = _controls || widget.failed;
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: GestureDetector(
-          onTap: failed ? onRetry : onExpand,
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.failed ? null : _toggleControls,
           child: Stack(
             fit: StackFit.expand,
             children: [
               const ColoredBox(color: Color(0xFF0E0F12)),
-              if (channel != null && video != null && !failed)
+              if (video != null && !widget.failed)
                 IgnorePointer(child: Video(controller: video, controls: NoVideoControls, fill: Colors.black, wakelock: false)),
-              if (channel == null)
-                const Center(
+              if (widget.failed)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 48, 20, 16),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.live_tv_rounded, size: 40, color: Colors.white38),
-                      SizedBox(height: 10),
-                      Text('Tap a channel to preview it here', style: TextStyle(color: _muted)),
+                      Text('Couldn\'t play ${channel.name}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      if (widget.error.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: SelectableText(widget.error, textAlign: TextAlign.center, style: const TextStyle(color: _muted, fontSize: 11, height: 1.3)),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(onPressed: widget.onRetry, icon: const Icon(Icons.refresh, size: 18), label: const Text('Try Again')),
                     ],
                   ),
                 ),
-              if (failed && channel != null)
-                Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Couldn\'t play ${channel.name}', style: const TextStyle(color: Colors.white70)),
-                      const SizedBox(height: 6),
-                      const Text('Tap to try again', style: TextStyle(color: _muted, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              if (channel != null) ...[
-                // Bottom caption over a soft gradient.
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: IgnorePointer(
+              // Caption over a soft gradient.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: widget.failed ? 0 : 1,
+                    duration: const Duration(milliseconds: 200),
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(14, 28, 14, 12),
                       decoration: BoxDecoration(
@@ -1409,7 +1508,7 @@ class _LivePreview extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              program == null ? channel.name : 'Now On: ${program!.title}',
+                              widget.program == null ? channel.name : 'Now On: ${widget.program!.title}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
@@ -1429,26 +1528,60 @@ class _LivePreview extends StatelessWidget {
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 8,
-                  top: 8,
-                  child: IconButton(
-                    onPressed: onToggleMute,
-                    icon: Icon(muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
-                    tooltip: muted ? 'Unmute' : 'Mute',
+              ),
+              // Controls.
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: !showControls,
+                  child: AnimatedOpacity(
+                    opacity: showControls ? 1 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(6, 6, 6, 18),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.black.withValues(alpha: .6), Colors.transparent],
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: _keep(widget.onToggleMute),
+                              icon: Icon(widget.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
+                              tooltip: widget.muted ? 'Unmute' : 'Mute',
+                            ),
+                            Expanded(
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 3,
+                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                ),
+                                child: Slider(
+                                  value: widget.muted ? 0 : widget.volume.clamp(0, 100).toDouble(),
+                                  max: 100,
+                                  activeColor: accent,
+                                  inactiveColor: Colors.white24,
+                                  onChanged: (v) {
+                                    widget.onVolume(v);
+                                    _scheduleHide();
+                                  },
+                                ),
+                              ),
+                            ),
+                            IconButton(onPressed: widget.onExpand, icon: const Icon(Icons.open_in_full_rounded), tooltip: 'Full screen'),
+                            IconButton(onPressed: widget.onClose, icon: const Icon(Icons.close_rounded), tooltip: 'Close preview'),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: IconButton(
-                    onPressed: onExpand,
-                    style: IconButton.styleFrom(backgroundColor: Colors.black38),
-                    icon: const Icon(Icons.open_in_full_rounded),
-                    tooltip: 'Watch full screen',
-                  ),
-                ),
-              ],
+              ),
             ],
           ),
         ),

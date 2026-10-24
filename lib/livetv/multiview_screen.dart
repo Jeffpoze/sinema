@@ -7,6 +7,7 @@ import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
 import 'iptv_player_screen.dart';
 import 'iptv_repository.dart';
+import 'live_playback.dart';
 import 'live_tv_screen.dart' show ensureUnlocked;
 
 // TiviMate's multi-view: up to four channels at once in a 2×2 grid. Only the
@@ -50,6 +51,7 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
 
   Future<void> _start(_Tile tile) async {
     try {
+      await tuneForLive(tile.player);
       await _applyVolumes();
       await tile.player.open(_media(tile.channel));
     } catch (_) {

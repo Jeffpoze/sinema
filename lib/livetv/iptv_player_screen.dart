@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../widgets/sinema_image.dart';
 import 'iptv_models.dart';
 import 'iptv_repository.dart';
+import 'live_playback.dart';
 import 'live_tv_screen.dart' show ensureUnlocked, playCatchup;
 import 'multiview_screen.dart';
 
@@ -40,6 +41,9 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   late final Player _player;
   late final VideoController _video;
   final List<StreamSubscription<dynamic>> _subs = [];
+  late final MpvLogTail _log;
+  bool _softwareDecode = false;
+  Timer? _startWatchdog;
   late int _index = widget.initialIndex;
   String? _error;
   bool _triedHlsFallback = false;
@@ -65,7 +69,8 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     IptvPlayerScreen.openCount.value++;
     SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _player = Player(configuration: PlayerConfiguration(title: _item.name, bufferSize: 16 * 1024 * 1024));
+    _player = Player(configuration: PlayerConfiguration(title: _item.name, bufferSize: 16 * 1024 * 1024, logLevel: liveLogLevel));
+    _log = MpvLogTail(_player);
     _video = VideoController(_player);
     _subs
       ..add(_player.stream.error.listen(_onError))
@@ -83,16 +88,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   Future<void> _start() async {
     // Let initState finish before _open's first setState.
     await Future<void>.value();
-    final native = _player.platform;
-    if (native is NativePlayer) {
-      try {
-        // Live-friendly: give up on a dead stream quickly instead of hanging,
-        // and keep a modest cache so zapping stays snappy.
-        await native.setProperty('network-timeout', '20');
-        await native.setProperty('cache', 'yes');
-        await native.setProperty('demuxer-max-back-bytes', '${8 * 1024 * 1024}');
-      } catch (_) {}
-    }
+    await tuneForLive(_player);
     await _open();
   }
 
@@ -110,9 +106,24 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     _bumpControls();
     try {
       final headers = source?.headers ?? const <String, String>{};
+      _log.clear();
       await _player.open(Media(overrideUrl ?? _repo.playbackUrl(item), httpHeaders: headers.isEmpty ? null : headers));
       if (token != _zapToken) return;
       _repo.markWatched(item);
+      // Still nothing after 10 s: some channels won't hardware-decode on the
+      // iPhone, so switch to software decoding once and reopen; after that,
+      // show what mpv reported.
+      _startWatchdog?.cancel();
+      _startWatchdog = Timer(Duration(seconds: _softwareDecode ? 15 : 10), () async {
+        if (!mounted || token != _zapToken || _hasPlayed || _error != null || _userPaused) return;
+        if (!_softwareDecode) {
+          _softwareDecode = true;
+          await tuneForLive(_player, softwareDecode: true);
+          if (mounted && token == _zapToken) _open(overrideUrl: overrideUrl);
+        } else {
+          _handleError('No picture from this channel.');
+        }
+      });
     } catch (e) {
       if (token == _zapToken && mounted) _handleError(e.toString());
     }
@@ -156,10 +167,13 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
       _open(overrideUrl: url.replaceFirst(RegExp(r'\.ts(?=\?|$)'), '.m3u8'));
       return;
     }
+    final details = _log.summary;
     setState(() {
-      _error = message;
+      _error = details.isEmpty ? message : '$message\n\n$details';
       _isBuffering = false;
     });
+    // Release the provider connection while the error is showing.
+    _player.stop();
   }
 
   // The clock moving is the reliable signal: it drives both the play/pause
@@ -354,6 +368,8 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     _clockTimer?.cancel();
     _sleepTimer?.cancel();
     _hideTimer?.cancel();
+    _startWatchdog?.cancel();
+    _log.dispose();
     for (final sub in _subs) {
       sub.cancel();
     }
@@ -417,7 +433,10 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
                   children: [
                     Text(_item.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
-                    Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFA5A7AC))),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 160, maxWidth: 560),
+                      child: SingleChildScrollView(child: SelectableText(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFA5A7AC)))),
+                    ),
                     const SizedBox(height: 20),
                     Row(
                       mainAxisSize: MainAxisSize.min,

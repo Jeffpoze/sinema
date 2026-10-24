@@ -28,10 +28,9 @@ Future<void> tuneForLive(Player player, {bool softwareDecode = false}) async {
   if (softwareDecode) await set('hwdec', 'no');
 }
 
-// How Live TV draws video. On iPhone, media_kit's hardware renderer is built
-// on OpenGL ES, which recent iOS versions no longer provide — mpv then has no
-// render context and never shows a picture. Its software renderer works
-// everywhere; decoding still uses the hardware decoder, copying frames back.
+// How Live TV draws video. On iPhone, media_kit's hardware renderer relies on
+// OpenGL ES, which Apple has deprecated; its software renderer avoids that
+// and still uses the hardware decoder (frames are copied back).
 VideoController liveVideoController(Player player) => VideoController(
       player,
       configuration: Platform.isIOS

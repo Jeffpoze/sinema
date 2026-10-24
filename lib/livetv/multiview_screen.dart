@@ -82,7 +82,7 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
 
   Media _media(IptvItem channel) {
     final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
-    return Media(channel.url, httpHeaders: headers.isEmpty ? null : headers);
+    return Media(_repo.playbackUrl(channel), httpHeaders: headers.isEmpty ? null : headers);
   }
 
   void _removeTile(int index) {

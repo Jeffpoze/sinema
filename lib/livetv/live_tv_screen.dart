@@ -891,6 +891,7 @@ class _GuideTabState extends State<_GuideTab> {
   bool _previewMuted = true;
   bool _previewFailed = false;
   StreamSubscription<String>? _previewErrors;
+  Timer? _previewWatchdog;
 
   @override
   void initState() {
@@ -942,6 +943,12 @@ class _GuideTabState extends State<_GuideTab> {
       _previewErrors = player.stream.error.listen((_) {
         if (mounted && player.state.position == Duration.zero) setState(() => _previewFailed = true);
       });
+      final native = player.platform;
+      if (native is NativePlayer) {
+        try {
+          await native.setProperty('network-timeout', '20');
+        } catch (_) {}
+      }
     }
     setState(() {
       _previewing = channel;
@@ -950,15 +957,23 @@ class _GuideTabState extends State<_GuideTab> {
     final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
     try {
       await _player!.setVolume(_previewMuted ? 0 : 100);
-      await _player!.open(Media(channel.url, httpHeaders: headers.isEmpty ? null : headers));
+      await _player!.open(Media(_repo.playbackUrl(channel), httpHeaders: headers.isEmpty ? null : headers));
     } catch (_) {
       if (mounted) setState(() => _previewFailed = true);
     }
+    // No picture after 20 s: say so instead of sitting on a black box.
+    _previewWatchdog?.cancel();
+    final watched = _player;
+    _previewWatchdog = Timer(const Duration(seconds: 20), () {
+      if (!mounted || _player != watched || watched == null) return;
+      if (watched.state.position == Duration.zero) setState(() => _previewFailed = true);
+    });
   }
 
   // Frees the provider connection: many plans allow a single stream, so the
   // preview must stop before the full-screen player starts.
   void _stopPreview() {
+    _previewWatchdog?.cancel();
     _previewErrors?.cancel();
     _previewErrors = null;
     _player?.dispose();

@@ -139,7 +139,7 @@ List<IptvItem> parseXtreamLive(({String sourceId, String base, String user, Stri
       group: input.categories[_str(s['category_id'])] ?? 'Uncategorized',
       // HLS rather than the default MPEG-TS: AVPlayer on iOS can't play a
       // raw .ts stream, and every Xtream panel can serve both.
-      url: '${input.base}/live/${input.user}/${input.pass}/$streamId.m3u8',
+      url: '${input.base}/live/${input.user}/${input.pass}/$streamId.ts',
       logo: _optStr(s['stream_icon']),
       epgId: _optStr(s['epg_channel_id']),
       number: int.tryParse(_str(s['num'])),

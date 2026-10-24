@@ -110,7 +110,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     _bumpControls();
     try {
       final headers = source?.headers ?? const <String, String>{};
-      await _player.open(Media(overrideUrl ?? item.url, httpHeaders: headers.isEmpty ? null : headers));
+      await _player.open(Media(overrideUrl ?? _repo.playbackUrl(item), httpHeaders: headers.isEmpty ? null : headers));
       if (token != _zapToken) return;
       _repo.markWatched(item);
     } catch (e) {
@@ -150,7 +150,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
     if (!mounted) return;
     // Many panels serve the same channel as HLS when ".ts" is swapped for
     // ".m3u8" — and iOS can't play raw MPEG-TS at all. Try that once.
-    final url = _item.url;
+    final url = _repo.playbackUrl(_item);
     if (!_triedHlsFallback && RegExp(r'\.ts(\?|$)').hasMatch(url)) {
       _triedHlsFallback = true;
       _open(overrideUrl: url.replaceFirst(RegExp(r'\.ts(?=\?|$)'), '.m3u8'));

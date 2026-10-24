@@ -484,6 +484,15 @@ class IptvRepository extends ChangeNotifier {
   bool get parentalUnlocked => _parentalUnlocked || !hasPin;
 
   bool isGroupLocked(String group) => hasPin && _prefs.lockedGroups.contains(group);
+  // The URL to hand the player. Xtream live channels saved by older versions
+  // point at ".m3u8" (needed back when iOS's own player was used); request
+  // the native MPEG-TS instead, which every Xtream server (and Dispatcharr)
+  // serves and the player handles directly.
+  String playbackUrl(IptvItem item) {
+    if (item.kind != IptvKind.live) return item.url;
+    return item.url.replaceFirstMapped(RegExp(r'(/live/[^/]+/[^/]+/[^/?]+)\.m3u8(\?|$)'), (m) => '${m.group(1)}.ts${m.group(2)}');
+  }
+
   bool isLocked(IptvItem item) => !parentalUnlocked && isGroupLocked(item.group);
 
   bool unlock(String pin) {

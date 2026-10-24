@@ -888,7 +888,7 @@ class _GuideTabState extends State<_GuideTab> {
   Player? _player;
   VideoController? _video;
   IptvItem? _previewing;
-  bool _muted = true;
+  bool _previewMuted = true;
   bool _previewFailed = false;
   StreamSubscription<String>? _previewErrors;
 
@@ -949,7 +949,7 @@ class _GuideTabState extends State<_GuideTab> {
     });
     final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};
     try {
-      await _player!.setVolume(_muted ? 0 : 100);
+      await _player!.setVolume(_previewMuted ? 0 : 100);
       await _player!.open(Media(channel.url, httpHeaders: headers.isEmpty ? null : headers));
     } catch (_) {
       if (mounted) setState(() => _previewFailed = true);
@@ -974,8 +974,8 @@ class _GuideTabState extends State<_GuideTab> {
   }
 
   void _toggleMute() {
-    setState(() => _muted = !_muted);
-    _player?.setVolume(_muted ? 0 : 100);
+    setState(() => _previewMuted = !_previewMuted);
+    _player?.setVolume(_previewMuted ? 0 : 100);
   }
 
   void _onChannelTap(IptvItem channel, List<IptvItem> channels) {
@@ -1039,7 +1039,7 @@ class _GuideTabState extends State<_GuideTab> {
                 channel: _previewing,
                 video: _video,
                 program: _previewing == null ? null : _repo.nowPlaying(_previewing!),
-                muted: _muted,
+                muted: _previewMuted,
                 failed: _previewFailed,
                 onToggleMute: _toggleMute,
                 onExpand: _previewing == null ? null : () => _watchFullScreen(_previewing!, channels),

@@ -88,6 +88,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   Future<void> _start() async {
     // Let initState finish before _open's first setState.
     await Future<void>.value();
+    await videoReady(_video);
     await tuneForLive(_player);
     await _open();
   }

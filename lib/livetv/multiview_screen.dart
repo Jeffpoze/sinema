@@ -51,6 +51,7 @@ class _MultiViewScreenState extends State<MultiViewScreen> {
 
   Future<void> _start(_Tile tile) async {
     try {
+      await videoReady(tile.video);
       await tuneForLive(tile.player);
       await _applyVolumes();
       await tile.player.open(_media(tile.channel));

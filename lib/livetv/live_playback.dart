@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 // Shared setup for the Live TV players (full screen, guide preview,
 // multi-view), all running on media_kit / libmpv.
@@ -21,7 +22,17 @@ Future<void> tuneForLive(Player player, {bool softwareDecode = false}) async {
 
   await set('network-timeout', '20');
   await set('cache', 'yes');
+  // In memory only; iOS apps can't create mpv's on-disk cache.
+  await set('cache-on-disk', 'no');
   if (softwareDecode) await set('hwdec', 'no');
+}
+
+// The video surface must exist before a stream is opened, or mpv starts
+// with no video output ("No render context set") and never shows a picture.
+Future<void> videoReady(VideoController controller) async {
+  try {
+    await controller.platform.future.timeout(const Duration(seconds: 5));
+  } catch (_) {}
 }
 
 // Keeps the last few warnings/errors mpv printed, to show when a stream

@@ -951,6 +951,7 @@ class _GuideTabState extends State<_GuideTab> {
       _previewFailed = false;
       _previewError = '';
     });
+    await videoReady(_video!);
     await tuneForLive(player, softwareDecode: softwareDecode);
     if (_player != player) return;
     final headers = _repo.sourceFor(channel.sourceId)?.headers ?? const <String, String>{};

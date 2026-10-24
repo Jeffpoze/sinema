@@ -27,6 +27,10 @@ class IptvPlayerScreen extends StatefulWidget {
   final int initialIndex;
   final String? subtitle;
 
+  // How many full-screen players are open. The guide's preview stops while
+  // one is, so a single-stream IPTV plan isn't asked for two streams.
+  static final ValueNotifier<int> openCount = ValueNotifier(0);
+
   @override
   State<IptvPlayerScreen> createState() => _IptvPlayerScreenState();
 }
@@ -58,6 +62,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
   @override
   void initState() {
     super.initState();
+    IptvPlayerScreen.openCount.value++;
     SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _player = Player(configuration: PlayerConfiguration(title: _item.name, bufferSize: 16 * 1024 * 1024));
@@ -353,6 +358,7 @@ class _IptvPlayerScreenState extends State<IptvPlayerScreen> {
       sub.cancel();
     }
     _player.dispose();
+    IptvPlayerScreen.openCount.value--;
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
